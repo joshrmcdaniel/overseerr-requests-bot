@@ -17,6 +17,8 @@ ENDPOINT = os.environ.get("OVERSEERR_URL")
 logger = loguru.logger
 logger.remove()
 logger.add(sys.stderr, level="TRACE")
+
+
 def _request(method: M):
     pass
 
@@ -52,7 +54,7 @@ async def post(
     body: Optional[Dict[str, str]] = None,
     headers: Optional[Dict[str, str]] = None,
 ) -> Union[Dict, OverseerrErrorResult]:
-    body = json.dumps(body).encode('ascii')
+    body = json.dumps(body).encode("ascii")
     async with aiohttp.ClientSession(headers=headers) as session:
         async with session.post(url, data=body) as r:
             try:

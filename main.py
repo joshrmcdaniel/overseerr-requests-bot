@@ -15,6 +15,7 @@ logger = loguru.logger
 logger.remove()
 logger.add(sys.stderr, level="TRACE")
 
+
 def main():
     token = os.environ.get("DISCORD_TOKEN")
     assert token is not None, "No discord token specified"
