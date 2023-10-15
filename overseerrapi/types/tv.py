@@ -1,17 +1,9 @@
 import jsonobject
 
 
-from . import (
-    MediaInfo,
-    Genre,
-    Rating,
-    CreatedBy,
-    ProductionCompany,
-    ProductionCountry,
-    SpokenLanguage,
-    Credits,
-    ExternalIds,
-)
+from .genre import Genre
+from .media import MediaInfo, Rating, CreatedBy, ProductionCompany, ProductionCountry, SpokenLanguage, Credits, ExternalIds
+
 
 
 class TvResult(jsonobject.JsonObject):

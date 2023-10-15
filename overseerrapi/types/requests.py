@@ -4,8 +4,8 @@ import jsonobject
 from .shared import PageInfo
 
 
-from . import MediaInfo
-from . import User
+from .media import MediaInfo
+from .user import User
 
 
 class RequestBody(jsonobject.JsonObject):

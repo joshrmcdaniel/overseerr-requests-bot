@@ -1,18 +1,8 @@
 import jsonobject
 
-from . import (
-    MediaInfo,
-    Release,
-    Genre,
-    RelatedVideo,
-    ProductionCompany,
-    ProductionCountry,
-    SpokenLanguage,
-    Credits,
-    Collection,
-    ExternalIds,
-    WatchProvider,
-)
+
+from .genre import Genre
+from .media import MediaInfo, Release, RelatedVideo, ProductionCompany, ProductionCountry, SpokenLanguage, Credits, Collection, ExternalIds, WatchProvider
 
 
 class MovieResult(jsonobject.JsonObject):

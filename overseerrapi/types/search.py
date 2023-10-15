@@ -3,7 +3,7 @@ import jsonobject
 
 from .shared import PageInfo
 
-from . import User
+from .user import User
 
 
 class MediaSearchResult(jsonobject.JsonObject):
