@@ -1,4 +1,18 @@
-from .media import PersonResult, Rating, MediaInfo, CreatedBy, Release, RelatedVideo, ProductionCompany, ProductionCountry, SpokenLanguage, Credits, Collection, ExternalIds, WatchProvider
+from .media import (
+    PersonResult,
+    Rating,
+    MediaInfo,
+    CreatedBy,
+    Release,
+    RelatedVideo,
+    ProductionCompany,
+    ProductionCountry,
+    SpokenLanguage,
+    Credits,
+    Collection,
+    ExternalIds,
+    WatchProvider,
+)
 from .movie import MovieDetails, MovieResult
 from .genre import Genre, Genres
 from .tv import TvResult, TVDetails, TVEpisode, TVSeason
@@ -23,12 +37,21 @@ __all__ = [
     "Requests",
     "RequestCount",
     "Genre",
-    "Genres", "Rating",
+    "Genres",
+    "Rating",
     "MovieDetails",
     "TVDetails",
-    "TVSeason", "ProductionCountry", "SpokenLanguage", "Credits", "ExternalIds", "Collection", "WatchProvider",
-    "TVEpisode", 
-    "Release", "ProductionCompany",
-    "RelatedVideo", "CreatedBy",
+    "TVSeason",
+    "ProductionCountry",
+    "SpokenLanguage",
+    "Credits",
+    "ExternalIds",
+    "Collection",
+    "WatchProvider",
+    "TVEpisode",
+    "Release",
+    "ProductionCompany",
+    "RelatedVideo",
+    "CreatedBy",
     "_load_type",
 ]

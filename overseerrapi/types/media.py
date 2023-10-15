@@ -1,5 +1,6 @@
 import jsonobject
 
+
 class MediaInfo(jsonobject.JsonObject):
     id = jsonobject.IntegerProperty(name="id")
     tmdb_id = jsonobject.IntegerProperty(name="tmdbId")

@@ -2,7 +2,18 @@ import jsonobject
 
 
 from .genre import Genre
-from .media import MediaInfo, Release, RelatedVideo, ProductionCompany, ProductionCountry, SpokenLanguage, Credits, Collection, ExternalIds, WatchProvider
+from .media import (
+    MediaInfo,
+    Release,
+    RelatedVideo,
+    ProductionCompany,
+    ProductionCountry,
+    SpokenLanguage,
+    Credits,
+    Collection,
+    ExternalIds,
+    WatchProvider,
+)
 
 
 class MovieResult(jsonobject.JsonObject):
