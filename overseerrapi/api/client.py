@@ -1,6 +1,6 @@
 import logging
 import sys
-from typing import Dict, TextIO
+from typing import Dict, TextIO, Union
 from ..shared.networking import get, post
 from ..types import *
 
@@ -20,7 +20,7 @@ class OverseerrAPI:
         self._logger.setLevel(log_level)
         self._logger.addHandler(logging.StreamHandler(log_file))
 
-    async def search(self, query: str, page: int = 1) -> MediaSearchResult:
+    async def search(self, query: str, page: int = 1) -> Union[MediaSearchResult, ErrorResponse]:
         self._logger.debug("Searching for %s on page %d", query, page)
         params = {"query": query, "page": 1}
         res = await get(self._url + "/search", params=params, headers=self._headers)
@@ -41,60 +41,56 @@ class OverseerrAPI:
 
         return res
 
-    async def user(self, id: int) -> User:
+    async def user(self, id: int) -> Union[User, ErrorResponse]:
         res = await get(self._url + f"/user/{id}", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=User)
 
-    async def users(self):
+    async def users(self) -> Union[UserSearchResult, ErrorResponse]:
         res = await get(self._url + "/user", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=UserSearchResult)
 
-    async def list_requests(self) -> Requests:
+    async def list_requests(self) -> Union[Requests, ErrorResponse]:
         res = await get(self._url + "/request", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=Requests)
 
-    async def get_request(self, id: int) -> Request:
+    async def get_request(self, id: int) -> Union[Request, ErrorResponse]:
         res = await get(self._url + f"/request/{id}", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=Request)
 
-    async def get_movie(self, id: int):
+    async def get_movie(self, id: int) -> Union[MovieDetails, ErrorResponse]:
         res = await get(self._url + f"/movie/{id}", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=MovieDetails)
 
-    async def get_movie_recommendations(self, id: int):
+    async def get_movie_recommendations(self, id: int) -> Union[MovieDetails, ErrorResponse]:
         res = await get(
             self._url + f"/movie/{id}/recommendations", headers=self._headers
         )
         return _load_type(json_data=res, overseerr_type=MovieDetails)
 
-    async def get_tv(self, id: int):
+    async def get_tv(self, id: int) -> Union[TVDetails, ErrorResponse]:
         res = await get(self._url + f"/tv/{id}", headers=self._headers)
-        with open("tv.json", "w") as f:
-            import json
-
-            json.dump(res, f, indent=4)
         return _load_type(json_data=res, overseerr_type=TVDetails)
 
-    async def get_tv_season(self, id: int, season: int):
+    async def get_tv_season(self, id: int, season: int) -> Union[TVSeason, ErrorResponse]:
         res = await get(self._url + f"/tv/{id}/season/{season}", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=TVSeason)
 
     async def get_tv_recommendations(self, id: int):
         pass
 
-    async def _get_genre(self, media_type: str):
+    async def _get_genre(self, media_type: str) -> Union[Genres, ErrorResponse]:
         if media_type not in ["tv", "movie"]:
             raise RuntimeError(f"Invalid media type {media_type}")
         res = await get(self._url + f"/genres/{media_type}", headers=self._headers)
         return _load_type(json_data=res, overseerr_type=Genres)
 
-    async def get_tv_genres(self) -> Genres:
+    async def get_tv_genres(self) -> Union[Genres, ErrorResponse]:
         return await self._get_genre("tv")
 
-    async def get_movie_genres(self) -> Genres:
+    async def get_movie_genres(self) -> Union[Genres, ErrorResponse]:
         return await self._get_genre("movie")
 
-    async def post_request(self, media_id: int, media_type: str, user_id: int):
+    async def post_request(self, media_id: int, media_type: str, user_id: int) -> Union[Request, ErrorResponse]:
         body = RequestBody(media_id=media_id, media_type=media_type, user_id=user_id)
         res = await post(
             self._url + "/request", body=body.to_dict(), headers=self._headers

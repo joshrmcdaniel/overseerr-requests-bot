@@ -9,6 +9,7 @@ class MediaInfo(jsonobject.JsonObject):
     requests = jsonobject.DefaultProperty(name="requests")
     created_at = jsonobject.StringProperty(name="createdAt")
     updated_at = jsonobject.StringProperty(name="updatedAt")
+    media_type = jsonobject.StringProperty(name="mediaType")
 
 
 class PersonResult(jsonobject.JsonObject):
