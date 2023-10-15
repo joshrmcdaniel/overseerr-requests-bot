@@ -1,31 +1,35 @@
 import os
-import sys
 import discord
 from discord.ext import commands
 from discord.commands import slash_command, Option
 from discord.commands.context import ApplicationContext
 from discord.ui.item import Item
-import loguru
-from typing import Self, Dict
-import networking
+from typing import Self, Dict, List, TypedDict
 import shared
-import overseerr_types as OverseerrTypes
+from overseerrapi import OverseerrAPI
+from overseerrapi.types import (
+    MediaSearchResult,
+    Genres,
+    TvResult,
+    MovieResult,
+    PersonResult,
+)
 
-logger = loguru.logger
-logger.remove()
-logger.add(sys.stderr, level="TRACE")
+logger = shared.get_logger()
+
+
+class GenreIDMap(TypedDict):
+    movie: Genres
+    tv: Genres
 
 
 class Overseerr(commands.Cog):
-    _url: str = os.environ.get("OVERSEERR_URL")
-    _headers: Dict[str, str] = {
-        "X-Api-Key": os.environ.get("OVERSEERR_TOKEN"),
-        "Content-Type": "application/json",
-    }
-    _discord_id_map: Dict[int, int] = {}
-
-    def __init__(self, bot: commands.Cog):
+    def __init__(self, bot: discord.Bot):
         self._bot = bot
+        self._overseerr_client = OverseerrAPI(
+            url=os.environ.get("OVERSEERR_URL"),
+            api_key=os.environ.get("OVERSEERR_API_KEY"),
+        )
 
     @slash_command(
         name="search",
@@ -41,92 +45,51 @@ class Overseerr(commands.Cog):
         ),
     ):
         """Searches for a movie or tv show"""
-        results = await Overseerr.search(query, page)
-        view = SearchView(results=results, search_query=query)
+        results = await self._overseerr_client.search(query, page)
+        view = SearchView(
+            overseerr_client=self._overseerr_client, results=results, search_query=query
+        )
         await view._edit_embed()
         await ctx.respond(embed=view.embed, view=view)
-
-    @staticmethod
-    async def search(
-        query, page=1
-    ) -> OverseerrTypes.Search | OverseerrTypes.OverseerrErrorResult:
-        params = {"query": query, "page": page}
-        data = await networking.get(
-            f"{Overseerr._url}/search", params=params, headers=Overseerr._headers
-        )
-        if isinstance(data, OverseerrTypes.OverseerrErrorResult):
-            logger.error("Error occured during Overseerr request: {}", data)
-        else:
-            data = await shared.load_json(data, OverseerrTypes.Search)
-        return data
-
-    @staticmethod
-    async def _setup_discord_id_map() -> Dict[int, int]:
-        ids = {}
-        users = (
-            await networking.get(f"{Overseerr._url}/user", headers=Overseerr._headers)
-        )["results"]
-        user_ids = map(lambda x: x["id"], users)
-        for i in user_ids:
-            user = await networking.get(
-                f"{Overseerr._url}/user/{i}", headers=Overseerr._headers
-            )
-            discord_id = user["settings"]["discordId"]
-            ids[int(discord_id)] = i
-        return ids
-
-    @staticmethod
-    async def post_request(*, media_id: int, media_type: str, discord_id: int) -> None:
-        logger.debug("Posting request")
-        if discord_id not in Overseerr._discord_id_map:
-            logger.debug("User ID {} not in map", discord_id)
-            Overseerr._discord_id_map = await Overseerr._setup_discord_id_map()
-        user_id = Overseerr._discord_id_map[discord_id]
-        payload = {
-            "mediaId": media_id,
-            "mediaType": media_type,
-            "profileId": user_id,
-        }
-        logger.trace("Body: {}", payload)
-
-        await networking.post(
-            f"{Overseerr._url}/request", body=payload, headers=Overseerr._headers
-        )
 
 
 class SearchView(discord.ui.View):
     def __init__(
         self,
         search_query: str,
-        results: OverseerrTypes.Search,
+        results: MediaSearchResult,
+        overseerr_client: OverseerrAPI,
         *items: Item,
         timeout: float | None = 180,
         disable_on_timeout: bool = False,
     ) -> Self:
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
+        self._overseerr_client: OverseerrAPI = overseerr_client
         self._index: int = 0
         self._poster_base: str = "https://image.tmdb.org/t/p/w342"
         self._backdrop_base: str = "https://image.tmdb.org/t/p/w300"
         self._query: str = search_query
-        self._results: OverseerrTypes.Search = results
+        self._results: MediaSearchResult = results
         self._result_length: int = self._results.total_results
+        self._genre_id_map: GenreIDMap = {}
         self.embed: discord.Embed = discord.Embed(color=discord.Color.blurple())
-        # Disable the left button if we're on the first page
-        self.children[0].disabled = True
+        self._discord_id_map: Dict[int, int] = {}
 
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
-    async def button_callback(
+    async def previous(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
         self._index -= 1
         button.disabled = self._results.page == 1 and self._index <= 0
         if self._index == 0 and self._results.page > self._results.total_pages:
-            self._results = await Overseerr.search(self._query, self._results.page - 1)
+            self._results = await self._overseerr_client.search(
+                self._query, self._results.page - 1
+            )
             self._index = 0
         await self._paginate(interaction)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label=">")
-    async def button_callback2(
+    async def next(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
         self._index += 1
@@ -135,39 +98,52 @@ class SearchView(discord.ui.View):
             and self._index * self._results.page >= self._result_length - 1
         )
         if self._index == 20 and self._results.page < self._results.total_pages:
-            self._results = await Overseerr.search(self._query, self._results.page + 1)
+            self._results = await self._overseerr_client.search(
+                self._query, self._results.page + 1
+            )
             self._index = 0
         await self._paginate(interaction)
 
     @discord.ui.button(style=discord.ButtonStyle.success, label="Request")
-    async def button_callback3(
+    async def request(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
         button.disabled = True
         self.embed.title = f"Sending requests for {self.embed.title}..."
+        if self._discord_id_map == {}:
+            users = self._overseerr_client.users()
+            for user in users:
+                user_full = await self._overseerr_client.user(user.id)
+                self._discord_id_map[int(user_full.settings.discord_id)] = user_full.id
+        user_id = self._discord_id_map.get(interaction.user.id, None)
+        if user_id is None:
+            interaction.response.send_message(
+                "You are not registered with Overseerr. Please register at https://overseerr.mydomain.com"
+            )
+            self.disable_all_items()
+            self.stop()
+            return
         await interaction.response.edit_message(embed=self.embed, view=self)
-        await Overseerr.post_request(
+        await self._overseerr_client.post_request(
             media_id=self._results.results[self._index].id,
             media_type=self._results.results[self._index].media_type,
             discord_id=interaction.user.id,
         )
         button.label = "Request Sent"
-        if self._results.results[self._index].media_type == "movie":
+        media_type = self._results.results[self._index].media_type
+        if media_type == "movie":
             name = self._results.results[self._index].title
-        elif self._results.results[self._index].media_type == "tv":
+        elif media_type == "tv":
             name = self._results.results[self._index].name
         else:
             name = "???"
         self.embed.title = f"Request for {name} Sent! 🎉"
         self.disable_all_items()
         self.stop()
-        await interaction.followup.send(
-            embed=self.embed,
-            view=self,
-        )
+        await interaction.edit_original_response(embed=self.embed, view=self)
 
     @discord.ui.button(style=discord.ButtonStyle.danger, label="Cancel")
-    async def button_callback4(
+    async def cancel(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
         self.disable_all_items()
@@ -176,7 +152,6 @@ class SearchView(discord.ui.View):
 
     async def _paginate(self, interaction: discord.Interaction) -> None:
         await self._edit_embed()
-
         await interaction.response.edit_message(embed=self.embed, view=self)
 
     async def _update_buttons(self) -> None:
@@ -192,48 +167,88 @@ class SearchView(discord.ui.View):
         )
 
     async def _edit_embed(self) -> None:
+        if self._results.total_results == 0:
+            self.embed.title = "No Results Found"
+            self.embed.description = f"No results found for {self._query}"
+            self.clear_items()
+            self.stop()
+            return
         await self._update_buttons()
+        if self._genre_id_map == {}:
+            logger.debug("Genre ID map is empty, setting it")
+            self._genre_id_map = {
+                "movie": {
+                    x["id"]: x["name"]
+                    for x in await self._overseerr_client.get_movie_genres()
+                },
+                "tv": {
+                    x["id"]: x["name"]
+                    for x in await self._overseerr_client.get_tv_genres()
+                },
+            }
+            logger.debug("Genre ID map set")
         self.embed.clear_fields()
-        result: OverseerrTypes.PersonResult | OverseerrTypes.MovieResult | OverseerrTypes.TvResult = self._results.results[
+        self.embed.remove_author()
+        self.embed.remove_footer()
+        self.embed.remove_image()
+        self.embed.remove_thumbnail()
+
+        result: TvResult | MovieResult | PersonResult = self._results.results[
             self._index
         ]
         result_number = (self._index + 1) + (self._results.page - 1) * 20
-        print(result)
+
         if result.media_type == "movie":
-            self.embed.title = result.title
-            self.embed.description = result.overview
+            result: MovieResult
+            title = result.title
+            release_date = result.release_date
+        elif result.media_type == "tv":
+            result: TvResult
+            title = result.name
+            release_date = result.first_air_date
+        else:
+            result: PersonResult
+            title = result.name
+        self.embed.title = title
+        if result.media_type == "person":
+            self.embed.set_thumbnail(url=self._backdrop_base + result.profile_path)
+        else:
+            logger.trace("Result: {}", result)
+            logger.trace("Result keys: {}", result.keys())
+            lang = result.original_language.upper()
             if result.backdrop_path:
-                self.embed.set_image(url=self._backdrop_base + result["backdropPath"])
+                self.embed.set_image(url=self._backdrop_base + result.backdrop_path)
             if result.poster_path:
-                self.embed.set_thumbnail(url=self._poster_base + result["posterPath"])
+                self.embed.set_thumbnail(url=self._poster_base + result.poster_path)
+
+            self.embed.description = result.overview
+            self.embed.add_field(name="Released", value=release_date, inline=True)
+            self.embed.add_field(name="Language", value=lang, inline=True)
+
+            genre_map = self._genre_id_map[result.media_type]
+            genre_str = ", ".join(genre_map[i] for i in result.genre_ids)
+
             self.embed.add_field(
-                name="Released", value=result.release_date, inline=True
+                name="Genre",
+                value=genre_str,
+                inline=True,
             )
             self.embed.add_field(
-                name="Language", value=result.original_language, inline=True
+                name="Popularity", value=f"{result.popularity:.2f}%", inline=False
             )
             self.embed.add_field(
-                name="Popularity", value=f"{int(result.popularity)}%", inline=False
-            )
-            self.embed.add_field(
-                name="Vote Average", value=f"{result.vote_average}", inline=True
+                name="Vote Average",
+                value=f"{result.vote_average:.2f}",
+                inline=True,
             )
             self.embed.add_field(
                 name="Vote Count", value=result.vote_count, inline=True
             )
-        elif result.media_type == "tv":
-            self.embed.description = result["overview"]
-            self.embed.add_field(
-                name=result["name"], value=result["overview"], inline=False
-            )
-        else:
-            self.embed.title = result.name
-            self.embed.set_thumbnail(url=self._backdrop_base + result.profile_path)
-            self.embed.add_field(name="test", value="TODO", inline=False)
+
         self.embed.set_footer(
-            text=f"Result {result_number} out of {self._result_length}\n\n{result.title} | ID: {result['id']}"
+            text=f"Result {result_number} out of {self._result_length}\n\n{title} | ID: {result.id}"
         )
 
 
-def setup(bot: commands.Bot):
+def setup(bot: discord.Bot):
     bot.add_cog(Overseerr(bot))
