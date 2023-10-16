@@ -72,7 +72,7 @@ class OverseerrAPI:
             res_map = {"person": PersonResult, "movie": MovieResult, "tv": TvResult}
             for result in results:
                 self._logger.debug("Found result %s", result)
-                typed_json = await _load_type(
+                typed_json = _load_type(
                     overseerr_type=res_map[result["mediaType"]], json_data=result
                 )
                 res.results.append(typed_json)
