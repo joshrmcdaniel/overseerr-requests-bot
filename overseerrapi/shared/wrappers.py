@@ -9,6 +9,17 @@ __all__ = ["_request_with_type"]
 
 
 def _request_with_type(overseerr_type, raise_for_error=False):
+    """
+    Generic request wrapper for overseerr types. This will load the response into the given type provided in `overseerr_type`.
+    This is intended for internal use only.
+
+    :param overseerr_type: The type to load the response into.
+    :param raise_for_error: Whether or not to raise an exception if the response is an error.
+    :return: The loaded type.
+    :rtype: Union[ErrorResponse, overseerr_type]
+
+    """
+
     def _request(f: Awaitable) -> Union[ErrorResponse, overseerr_type]:
         @wraps(f)
         async def wrapper(*args, **kwargs):
