@@ -112,6 +112,8 @@ class TVDetails(jsonobject.JsonObject):
     external_ids = jsonobject.ObjectProperty(lambda: ExternalIds, name="externalIds")
     media_info = jsonobject.ObjectProperty(lambda: MediaInfo, name="mediaInfo")
     keywords = jsonobject.ListProperty(lambda: Keywords, name="keywords")
+    vote_average = jsonobject.DecimalProperty(name="voteAverage")
+    vote_count = jsonobject.IntegerProperty(name="voteCount")
 
 
 class TVSearchResponse(jsonobject.JsonObject):
