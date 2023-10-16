@@ -1,4 +1,3 @@
-
 import logging
 from typing import Any, Awaitable, Union
 from functools import wraps
@@ -6,9 +5,8 @@ from ..types import _load_type as load_type, ErrorResponse
 
 logger = logging.getLogger(__name__)
 
-__all__ = [
-    "_request_with_type"
-]
+__all__ = ["_request_with_type"]
+
 
 def _request_with_type(overseerr_type, raise_for_error=False):
     def _request(f: Awaitable) -> Union[ErrorResponse, overseerr_type]:

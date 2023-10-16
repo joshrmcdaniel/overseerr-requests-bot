@@ -85,6 +85,7 @@ class MovieDetails(jsonobject.JsonObject):
         lambda: WatchProvider, name="watchProviders"
     )
 
+
 class MovieSearchResult(jsonobject.JsonObject):
     page = jsonobject.IntegerProperty(name="page")
     total_results = jsonobject.IntegerProperty(name="totalResults")

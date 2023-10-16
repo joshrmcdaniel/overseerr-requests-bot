@@ -13,6 +13,7 @@ R = TypeVar("R", Dict, List[Dict], ErrorResponse)
 
 __all__ = ["get", "post"]
 
+
 async def get(
     url: str,
     *,

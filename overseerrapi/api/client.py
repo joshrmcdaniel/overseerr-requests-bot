@@ -233,12 +233,12 @@ class OverseerrAPI:
         """
         if media_type not in ["movie", "tv"]:
             raise RuntimeError(f"Invalid media type {media_type}")
-        
+
         body = RequestBody(media_id=media_id, media_type=media_type, user_id=user_id)
         return await post(
             self._url + "/request", body=body.to_dict(), headers=self._headers
         )
-        
+
     @request_with_type(overseerr_type=Requests)
     async def get_all_requests(
         self,
