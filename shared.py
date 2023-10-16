@@ -1,10 +1,9 @@
-
 import loguru
 from loguru._logger import Logger
 import sys
 import os
 from dotenv import load_dotenv
-
+import discord
 
 load_dotenv()
 log_file = os.environ.get("LOG_FILE", sys.stderr)
@@ -19,6 +18,10 @@ assert os.environ.get("LOG_LEVEL") in [
 ], "Invalid log level specified"
 
 logger = None
+
+
+async def get_role(guild: discord.Guild, role_name: str):
+    return next(role for role in guild.roles if role_name == role.name)
 
 
 def get_logger() -> Logger:
