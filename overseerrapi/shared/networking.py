@@ -1,4 +1,5 @@
 import aiohttp
+import aiohttp.client_exceptions
 from ..types import ErrorResponse, _load_type
 from typing import List, Optional, TypeVar, Dict
 import json
@@ -6,10 +7,11 @@ import urllib.parse
 import logging
 
 
-logger = logging.getLogger("overseerapi.shared.networking")
+logger = logging.getLogger(__name__)
 
 R = TypeVar("R", Dict, List[Dict], ErrorResponse)
 
+__all__ = ["get", "post"]
 
 async def get(
     url: str,
@@ -27,23 +29,28 @@ async def get(
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as r:
             try:
+                resp = await r.json()
+                logger.debug("Received response {} from {}", r.status, url)
+                logger.log(5, "Response: {}", resp)
                 r.raise_for_status()
-            except aiohttp.ClientResponseError as cre:
+
+            except aiohttp.client_exceptions.ClientConnectionError as cce:
+                logger.error(f"Error while requesting {url}: {cce}")
+                logging.fatal(cce)
+
+            except aiohttp.client_exceptions.ClientResponseError as cre:
                 try:
-                    res = _load_type(await r.json(), ErrorResponse)
+                    res = _load_type(json_data=resp, overseerr_type=ErrorResponse)
                     return res
                 except Exception as e:
                     logger.error(f"Error while requesting {url}: {cre}, {cre}")
                     raise e
-            logger.debug("Received response {} from {}", r.status, url)
-            logger.log(10, "Response: {}", await r.text())
-            return await r.json()
+            return resp
 
 
 async def post(
     url: str,
     *,
-    load_json: bool = True,
     body: Optional[Dict[str, str]] = None,
     headers: Optional[Dict[str, str]] = None,
 ) -> R:
@@ -51,15 +58,12 @@ async def post(
     async with aiohttp.ClientSession(headers=headers) as session:
         async with session.post(url, data=body) as r:
             try:
+                resp = await r.json()
                 r.raise_for_status()
             except aiohttp.ClientResponseError as cre:
                 try:
-                    return (
-                        _load_type(await r.json(), ErrorResponse)
-                        if load_json
-                        else await r.text()
-                    )
+                    return _load_type(resp, ErrorResponse)
                 except Exception as e:
                     logger.error(f"Error while requesting {url}: {cre}, {e}")
                     raise e from cre
-            return await r.json() if load_json else await r.text()
+            return resp
