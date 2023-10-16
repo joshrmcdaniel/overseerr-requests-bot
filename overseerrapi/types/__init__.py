@@ -23,6 +23,7 @@ from .user import User
 from .load import load_json as _load_type
 from .requests import Requests, Request, RequestCount, RequestBody
 from .genre import Genre, Genres
+from .shared import PageInfo
 
 
 __all__ = [
@@ -57,5 +58,6 @@ __all__ = [
     "ProductionCompany",
     "RelatedVideo",
     "CreatedBy",
+    "PageInfo",
     "_load_type",
 ]
