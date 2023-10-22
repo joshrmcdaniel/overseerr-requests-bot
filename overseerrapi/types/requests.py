@@ -34,7 +34,7 @@ class Request(jsonobject.JsonObject):
         lambda: User, name="requestedBy", required=True
     )
     modified_by = jsonobject.DefaultProperty(lambda: User, name="modifiedBy")
-    is_4k = jsonobject.BooleanProperty(name="is4k", required=True)
+    is_4k = jsonobject.BooleanProperty(name="is4k")
     server_id = jsonobject.IntegerProperty(name="serverId")
     profile_id = jsonobject.IntegerProperty(name="profileId")
     root_folder = jsonobject.StringProperty(name="rootFolder")

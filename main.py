@@ -1,27 +1,33 @@
 import os
 
 import discord
-import shared
 from dotenv import load_dotenv
+import logging
 
 
 load_dotenv()
-logger = None
+log = None
 
 
 def init():
     """Validate env file and setup logging"""
-    global logger
-    logger = shared.get_logger()
-    logger.info("Logging initialized.")
-    logger.debug("Logging level set to {}", os.environ.get("LOG_LEVEL", "INFO"))
-    logger.trace("Logging trace enabled.")
-    logger.debug("Validating environment file.")
+    global log
+    log_level = os.environ.get("LOG_LEVEL", "INFO")
+    assert log_level in [
+        "TRACE",
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    ], "Invalid log level specified"
+    log = setup_logging()
+    log.debug("Validating environment file.")
     assert os.environ.get("OVERSEERR_URL") is not None, "No overseerr url specified"
     assert (
         os.environ.get("OVERSEERR_API_KEY") is not None
     ), "No overseerr api key specified"
-    logger.debug("Environment file validated.")
+    log.debug("Environment file validated.")
 
 
 INTENTS = discord.Intents.default()
@@ -30,6 +36,31 @@ BOT = discord.Bot(
     description="Manage requests for overseerr",
     indents=INTENTS,
 )
+
+from functools import partial, partialmethod
+
+
+def setup_logging():
+    log = logging.getLogger()
+    logging.TRACE = 5
+    logging.addLevelName(logging.TRACE, "TRACE")
+    logging.Logger.trace = partialmethod(logging.Logger.log, logging.TRACE)
+    logging.trace = partial(logging.log, logging.TRACE)
+
+    log_level = os.environ.get("LOG_LEVEL", "INFO")
+    log.setLevel(log_level)
+    handler = logging.StreamHandler()
+    handler.setLevel(log_level)
+    formatter = logging.Formatter(
+        "[{asctime}] [{levelname}] [{name}] {message}", style="{"
+    )
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
+    logging.getLogger("discord").setLevel("ERROR")
+    log.info("Logging initialized.")
+    log.info("Log level set to %s", log_level)
+    log.trace("Logging trace enabled.")
+    return log
 
 
 def main():
@@ -44,13 +75,13 @@ def main():
 
 @BOT.event
 async def on_ready():
-    logger.success("Bot ready.")
+    log.info("Bot ready.")
     await BOT.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching, name="For requests"
         )
     )
-    logger.debug("Bot presence set.")
+    log.debug("Bot presence set.")
 
 
 if __name__ == "__main__":

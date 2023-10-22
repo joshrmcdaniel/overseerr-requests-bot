@@ -1,26 +1,22 @@
 import logging
 import sys
 import jsonobject
-from functools import wraps
+from functools import partial, partialmethod
 from typing import (
     Dict,
     TextIO,
     Union,
     Optional,
     Self,
-    Any,
+    Literal,
     List,
-    TypeVar,
 )
-from ..shared.networking import get, post
+from ..shared.networking import get, post, put
 from ..types import *
 from ..shared.wrappers import _request_with_type as request_with_type
 
 
 __all__ = ["OverseerrAPI"]
-
-
-logging.addLevelName(5, "TRACE")
 
 
 class OverseerrAPI:
@@ -32,17 +28,19 @@ class OverseerrAPI:
         log_level: str = "INFO",
         log_file: str | TextIO = sys.stderr,
     ) -> Self:
+        setup_logging()
         self._url = url
         self._api_key = api_key
         self._logger = logging.getLogger(__name__)
-        self._logger.setLevel(log_level)
         ch = logging.StreamHandler(log_file)
         formatter = logging.Formatter(
             "[%(asctime)s] [%(name)s - %(levelname)s] %(message)s"
         )
         ch.setFormatter(formatter)
+        ch.setLevel(log_level.upper())
         self._logger.addHandler(ch)
         self._logger.debug("Initialized OverseerrAPI")
+        self._logger.trace("TEST")
 
     async def search(
         self, query: str, page: int = 1
@@ -70,16 +68,17 @@ class OverseerrAPI:
             # it is certain that the results key will be a list of MovieResult, TvResult, or PersonResult
             # if the result is a MediaSearchResult
             res_map = {"person": PersonResult, "movie": MovieResult, "tv": TvResult}
-            for result in results:
-                self._logger.debug("Found result %s", result)
-                typed_json = _load_type(
-                    overseerr_type=res_map[result["mediaType"]], json_data=result
-                )
-                res.results.append(typed_json)
+            if results:
+                for result in results:
+                    self._logger.debug("Found result %s", result)
+                    typed_json = _load_type(
+                        overseerr_type=res_map[result["mediaType"]], json_data=result
+                    )
+                    res.results.append(typed_json)
 
         return res
 
-    @request_with_type(overseerr_type=MovieResult)
+    @request_with_type(overseerr_type=User)
     async def user(self, id: int) -> Union[User, ErrorResponse]:
         """
         Retrieve a user by ID
@@ -215,7 +214,7 @@ class OverseerrAPI:
         """
         return await get(self._url + f"/genres/movie", headers=self._headers)
 
-    @request_with_type(overseerr_type=Genre)
+    @request_with_type(overseerr_type=Request)
     async def post_request(
         self, media_id: int, media_type: str, user_id: int
     ) -> Union[Request, ErrorResponse]:
@@ -234,10 +233,26 @@ class OverseerrAPI:
         if media_type not in ["movie", "tv"]:
             raise RuntimeError(f"Invalid media type {media_type}")
 
-        body = RequestBody(media_id=media_id, media_type=media_type, user_id=user_id)
+        body = RequestBody(id=media_id, media_type=media_type, user_id=user_id)
         return await post(
-            self._url + "/request", body=body.to_dict(), headers=self._headers
+            self._url + "/request", body=body.to_json(), headers=self._headers
         )
+
+    @request_with_type(overseerr_type=Request)
+    async def modify_request(
+        self, id: int, status: Literal["approve", "decline"]
+    ) -> Union[Request, ErrorResponse]:
+        if status not in ["approve", "decline"]:
+            raise RuntimeError(f"Invalid status {status}")
+        return await post(self._url + f"/request/{id}/{status}", headers=self._headers)
+
+    @request_with_type(overseerr_type=Request)
+    async def deny_request(self, id: int) -> Union[Request, ErrorResponse]:
+        return await post(self._url + f"/request/{id}/decline", headers=self._headers)
+
+    @request_with_type(overseerr_type=Request)
+    async def approve_request(self, id: int) -> Union[Request, ErrorResponse]:
+        return await post(self._url + f"/request/{id}/approve", headers=self._headers)
 
     @request_with_type(overseerr_type=Requests)
     async def get_all_requests(
@@ -256,26 +271,25 @@ class OverseerrAPI:
         :type take: int
         :param skip: The number of results to skip
         :type skip: int
-        :param filter_by: The type of requests to return. Either `"all"`, `"movie"`, `"tv"`, or `"other"`
+        :param filter_by: The type of requests to return. Must be one of: "all", "approved", "available", "pending", "processing", "unavailable", "failed"
         :type filter_by: str
-        :param sort: The field to sort by. Either `"added"`, `"modified"`, `"requested"`, `"releasedate"`, `"popularity"`, `"title"`, `"status"`, or `"votecount"`
+        :param sort: The field to sort by. Must be `"added"` or `"modified"`
         :type sort: str
         :param requested_by: The ID of the user to return requests for
         :type requested_by: Optional[int]
         :return: The requests, or an error
         :rtype: Union[Requests, ErrorResponse]
         """
-        filter_by_options = ["all", "movie", "tv", "other"]
-        sort_options = [
-            "added",
-            "modified",
-            "requested",
-            "releasedate",
-            "popularity",
-            "title",
-            "status",
-            "votecount",
+        filter_by_options = [
+            "all",
+            "approved",
+            "available",
+            "pending",
+            "processing",
+            "unavailable",
+            "failed",
         ]
+        sort_options = ["added", "modified"]
         if filter_by not in filter_by_options:
             raise RuntimeError(f"Invalid filter: {filter_by}")
         if sort not in sort_options:
@@ -299,3 +313,10 @@ class OverseerrAPI:
         :rtype: Dict[str, str]
         """
         return {"X-Api-Key": self._api_key, "Content-Type": "application/json"}
+
+
+def setup_logging():
+    logging.TRACE = 5
+    logging.addLevelName(logging.TRACE, "TRACE")
+    logging.Logger.trace = partialmethod(logging.Logger.log, logging.TRACE)
+    logging.trace = partial(logging.log, logging.TRACE)

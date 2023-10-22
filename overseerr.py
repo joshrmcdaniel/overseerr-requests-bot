@@ -5,10 +5,12 @@ from discord.commands import slash_command, Option
 from discord.commands.context import ApplicationContext
 import shared
 from overseerrapi import OverseerrAPI
+import traceback as tb
+import logging
 
 from views import SearchView, RequestsView
 
-logger = shared.get_logger()
+log = logging.getLogger(__name__)
 
 
 class Overseerr(commands.Cog):
@@ -18,6 +20,7 @@ class Overseerr(commands.Cog):
             url=os.environ.get("OVERSEERR_URL"),
             api_key=os.environ.get("OVERSEERR_API_KEY"),
         )
+        log.info("Overseerr cog ready.")
 
     @slash_command(
         name="search",
@@ -50,6 +53,13 @@ class Overseerr(commands.Cog):
         )
         await view._edit_embed()
         await ctx.respond(embed=view.embed, view=view)
+
+    @_search.error
+    async def _search_error(self, ctx: ApplicationContext, error):
+        trace = tb.format_exception(error)
+        log.error(error)
+        log.debug(trace)
+        await ctx.respond("An error occurred while searching..")
 
     @slash_command(
         name="requests",
@@ -117,6 +127,11 @@ class Overseerr(commands.Cog):
         )
         await view._edit_embed()
         await ctx.respond(embed=view.embed, view=view)
+
+    @_requests.error
+    async def _requests_error(self, ctx: ApplicationContext, error):
+        print(error)
+        await ctx.respond("An error occurred while searching..")
 
 
 def setup(bot: discord.Bot):
