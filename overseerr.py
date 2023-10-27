@@ -77,8 +77,8 @@ class Overseerr(commands.Cog):
         """Searches for a movie or tv show"""
         requester_role = await shared.get_role(ctx.guild, "Requester")
         if requester_role not in ctx.author.roles:
-            return await ctx.respond("You are not allowed to use this command.")
-        await ctx.respond(f"Searching for {query}...")
+            return await ctx.respond(content="You are not allowed to use this command.")
+        await ctx.respond(content=f"Searching for {query}...")
         results = await self.overseerr_client.search(query, page)
         view = self.get_search_view(results, query, user_id=ctx.user.id)
         await view._edit_embed()
@@ -89,7 +89,7 @@ class Overseerr(commands.Cog):
         trace = tb.format_exception(error)
         log.error(error)
         log.debug(trace)
-        await ctx.respond("An error occurred while searching..")
+        await ctx.respond(content="An error occurred while searching..")
 
     @slash_command(
         name="requests",

@@ -79,7 +79,11 @@ class OverseerrView(discord.ui.View):
             return
 
         if isinstance(result, (TvResult, MovieResult)) and (x := result.genre_ids):
-            genre_str = ", ".join(self.genre_id_map[result.media_type][i] for i in x)
+            genre_str = ", ".join(
+                self.genre_id_map[result.media_type].get(i, "")
+                for i in x
+                if i in self.genre_id_map[result.media_type]
+            )
         elif isinstance(result, (MovieDetails, TVDetails)) and (x := result.genres):
             genre_str = ", ".join(genre.name for genre in x)
         else:
