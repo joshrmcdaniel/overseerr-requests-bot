@@ -1,12 +1,15 @@
 import os
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.commands import slash_command, Option
 from discord.commands.context import ApplicationContext
 import shared
 from overseerrapi import OverseerrAPI
 import traceback as tb
 import logging
+from overseerrapi.types import Requests, MediaSearchResult
+
+from typing import Dict, Any
 
 from views import SearchView, RequestsView
 
@@ -20,7 +23,38 @@ class Overseerr(commands.Cog):
             url=os.environ.get("OVERSEERR_URL"),
             api_key=os.environ.get("OVERSEERR_API_KEY"),
         )
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        log.info("Overseerr cog loading...")
+        log.info("Starting Discord ID map task..")
+        self.map_discord_ids.start()
+        self.map_genre_ids.start()
+        log.info("Discord ID map task started")
         log.info("Overseerr cog ready.")
+
+    @tasks.loop(hours=1)
+    async def map_discord_ids(self):
+        log.info("Updating discord id map...")
+        discord_id_map = {}
+        users = await self.overseerr_client.users()
+        for user in users.results:
+            user_full = await self.overseerr_client.user(user.id)
+            discord_id_map[int(user_full.settings.discord_id)] = user_full.id
+
+        self._discord_id_map = discord_id_map
+        log.info("Updated discord user id map")
+
+    @tasks.loop(hours=168)
+    async def map_genre_ids(self):
+        movies = await self.overseerr_client.get_tv_genres()
+        tvs = await self.overseerr_client.get_tv_genres()
+        genre_id_map = {
+            "movie": {x["id"]: x["name"] for x in movies},
+            "tv": {x["id"]: x["name"] for x in tvs},
+        }
+        log.debug("Genre ID map retrieved")
+        self._genre_id_map = genre_id_map
 
     @slash_command(
         name="search",
@@ -44,15 +78,11 @@ class Overseerr(commands.Cog):
         requester_role = await shared.get_role(ctx.guild, "Requester")
         if requester_role not in ctx.author.roles:
             return await ctx.respond("You are not allowed to use this command.")
+        await ctx.respond(f"Searching for {query}...")
         results = await self.overseerr_client.search(query, page)
-        view = SearchView(
-            user_id=ctx.user.id,
-            overseerr_client=self.overseerr_client,
-            results=results,
-            search_query=query,
-        )
+        view = self.get_search_view(results, query, user_id=ctx.user.id)
         await view._edit_embed()
-        await ctx.respond(embed=view.embed, view=view)
+        await ctx.edit(embed=view.embed, view=view, content=f"Results for: {query}")
 
     @_search.error
     async def _search_error(self, ctx: ApplicationContext, error):
@@ -97,7 +127,7 @@ class Overseerr(commands.Cog):
                 "unavailable",
                 "failed",
             ],
-            default="all",
+            default="pending",
         ),
         sort: Option(
             str,
@@ -118,20 +148,40 @@ class Overseerr(commands.Cog):
             "filter_by": filter,
             "sort": sort,
         }
+        await ctx.respond("Fetching requests...")
         requests = await self.overseerr_client.get_all_requests(**params)
-        view = RequestsView(
-            user_id=ctx.user.id,
-            overseerr_client=self.overseerr_client,
-            requests=requests,
-            params=params,
-        )
+        view = self.get_request_view(params, requests, user_id=ctx.user.id)
         await view._edit_embed()
-        await ctx.respond(embed=view.embed, view=view)
+        await ctx.edit(embed=view.embed, view=view, content="")
 
     @_requests.error
     async def _requests_error(self, ctx: ApplicationContext, error):
         print(error)
         await ctx.respond("An error occurred while searching..")
+
+    def get_request_view(
+        self, params: Dict[str, Any], requests: Requests, user_id: int
+    ) -> RequestsView:
+        return RequestsView(
+            user_id=user_id,
+            overseerr_client=self.overseerr_client,
+            discord_id_map=self._discord_id_map,
+            genre_id_map=self._genre_id_map,
+            requests=requests,
+            params=params,
+        )
+
+    def get_search_view(
+        self, results: MediaSearchResult, search_query: str, user_id: int
+    ) -> SearchView:
+        return SearchView(
+            user_id=user_id,
+            overseerr_client=self.overseerr_client,
+            results=results,
+            search_query=search_query,
+            discord_id_map=self._discord_id_map,
+            genre_id_map=self._genre_id_map,
+        )
 
 
 def setup(bot: discord.Bot):

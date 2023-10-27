@@ -1,7 +1,6 @@
 from discord.ui.item import Item
 import discord
-from typing import Self, Dict, TypedDict, Union
-import shared
+from typing import Self, Dict, TypedDict, Union, Any
 from overseerrapi import OverseerrAPI
 from overseerrapi.types import (
     MediaSearchResult,
@@ -31,6 +30,8 @@ class OverseerrView(discord.ui.View):
     def __init__(
         self,
         overseerr_client: OverseerrAPI,
+        genre_id_map: GenreIDMap,
+        discord_id_map: Dict[int, int],
         user_id: int,
         *items: Item,
         timeout: float | None = 180,
@@ -41,8 +42,15 @@ class OverseerrView(discord.ui.View):
         self.overseerr_client: OverseerrAPI = overseerr_client
         self._embed: discord.Embed = discord.Embed(color=discord.Color.blurple())
         self._index: int = 0
-        self._genre_id_map: GenreIDMap = {}
+        self._genre_id_map = genre_id_map
+        self._discord_id_map = discord_id_map
         self.interaction_check = self.check_interaction
+
+    def previous_button_disabled(self) -> bool:
+        return self.result_number <= 1
+
+    def next_button_disabled(self) -> bool:
+        return self.result_count == self.result_number
 
     def clear_embed(self) -> None:
         self._embed = discord.Embed(color=discord.Color.blurple())
@@ -70,44 +78,58 @@ class OverseerrView(discord.ui.View):
             self._person_embed(result)
             return
 
-        if isinstance(result, (TvResult, MovieResult)):
-            genre_str = ", ".join(
-                self._genre_id_map[result.media_type][i] for i in result.genre_ids
-            )
+        if isinstance(result, (TvResult, MovieResult)) and (x := result.genre_ids):
+            genre_str = ", ".join(self.genre_id_map[result.media_type][i] for i in x)
+        elif isinstance(result, (MovieDetails, TVDetails)) and (x := result.genres):
+            genre_str = ", ".join(genre.name for genre in x)
         else:
-            genre_str = ", ".join(genre.name for genre in result.genres)
-
+            genre_str = None
         if result.backdrop_path:
             self.embed.set_image(url=self.backdrop_base + result.backdrop_path)
         if result.poster_path:
             self.embed.set_thumbnail(url=self.poster_base + result.poster_path)
+
         if isinstance(result, (MovieResult, MovieDetails)):
             self._movie_embed(result)
         elif isinstance(result, (TvResult, TVDetails)):
             self._tv_embed(result)
+        logger.debug("Setting up embed for %s", self.embed.title)
+        logger.trace("Data to parse: %s", result)
+
         self.embed.description = result.overview
         if result.backdrop_path:
             self.embed.set_image(url=self.backdrop_base + result.backdrop_path)
         if result.poster_path:
             self.embed.set_thumbnail(url=self.poster_base + result.poster_path)
 
-        self.embed.add_field(
-            name="Language", value=result.original_language, inline=True
-        )
-        self.embed.add_field(name="Genres", value=genre_str, inline=True)
-        self.embed.add_field(
-            name="Popularity", value=f"{result.popularity:.2f}%", inline=False
-        )
-        self.embed.add_field(
-            name="Vote Average",
-            value=f"{result.vote_average:.2f}",
-            inline=True,
-        )
-        self.embed.add_field(name="Vote Count", value=result.vote_count, inline=True)
+        if genre_str:
+            self.embed.add_field(name="Genres", value=genre_str, inline=True)
+
+        if result.original_language:
+            self.embed.add_field(
+                name="Language", value=result.original_language.upper(), inline=True
+            )
+        if result.popularity:
+            self.embed.add_field(
+                name="Popularity", value=f"{result.popularity:.2f}%", inline=False
+            )
+        if result.vote_average:
+            self.embed.add_field(
+                name="Vote Average",
+                value=f"{result.vote_average:.2f}",
+                inline=True,
+            )
+        if result.vote_count:
+            self.embed.add_field(
+                name="Vote Count", value=result.vote_count, inline=True
+            )
 
         self.embed.set_footer(
             text=f"Result {self.result_number} out of {self.result_count}\n\n{self.embed.title} | ID: {result.id}"
         )
+
+    async def check_interaction(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.cmd_by_user_id
 
     @property
     def poster_base(self) -> str:
@@ -125,24 +147,13 @@ class OverseerrView(discord.ui.View):
     def genre_id_map(self) -> GenreIDMap:
         return self._genre_id_map
 
-    async def setup_genre_id_map(self) -> None:
-        if self._genre_id_map == {}:
-            logger.debug("Genre ID map is empty, setting it")
-            self._genre_id_map = {
-                "movie": {
-                    x["id"]: x["name"]
-                    for x in await self.overseerr_client.get_movie_genres()
-                },
-                "tv": {
-                    x["id"]: x["name"]
-                    for x in await self.overseerr_client.get_tv_genres()
-                },
-            }
-            logger.debug("Genre ID map set")
-        return self._genre_id_map
+    @property
+    def data(self):
+        raise NotImplementedError
 
-    async def check_interaction(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id == self.cmd_by_user_id
+    @property
+    def current_result(self):
+        raise NotImplementedError
 
     @property
     def result_number(self):
@@ -156,16 +167,20 @@ class OverseerrView(discord.ui.View):
 class SearchView(OverseerrView):
     def __init__(
         self,
+        overseerr_client: OverseerrAPI,
         search_query: str,
         user_id: int,
         results: MediaSearchResult,
-        overseerr_client: OverseerrAPI,
+        genre_id_map: GenreIDMap,
+        discord_id_map: Dict[int, int],
         *items: Item,
         timeout: float | None = 180,
         disable_on_timeout: bool = False,
     ) -> Self:
         super().__init__(
             overseerr_client,
+            genre_id_map=genre_id_map,
+            discord_id_map=discord_id_map,
             user_id=user_id,
             *items,
             timeout=timeout,
@@ -174,8 +189,6 @@ class SearchView(OverseerrView):
         self._index: int = 0
         self._query: str = search_query
         self._results: MediaSearchResult = results
-        self._genre_id_map: GenreIDMap = {}
-        self._discord_id_map: Dict[int, int] = {}
 
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
     async def previous(
@@ -249,29 +262,28 @@ class SearchView(OverseerrView):
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
         button.disabled = True
-        self.embed.title = f"Sending requests for {self.embed.title}..."
-        if self._discord_id_map == {}:
-            users = await self.overseerr_client.users()
-            for user in users.results:
-                user_full = await self.overseerr_client.user(user.id)
-                self._discord_id_map[int(user_full.settings.discord_id)] = user_full.id
+        self.disable_all_items()
+        self.clear_items()
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"Sending requests for {self.embed.title}...",
+            view=self,
+            embed=self.embed,
+        )
         user_id = self._discord_id_map.get(interaction.user.id, None)
         if user_id is None:
-            interaction.response.send_message("You are not registered with Overseerr.")
-            self.disable_all_items()
-            self.stop()
+            await interaction.edit_original_response(
+                content="You are not registered with Overseerr."
+            )
             return
-        await interaction.response.edit_message(embed=self.embed, view=self)
         await self.overseerr_client.post_request(
             media_id=self.result.id,
             media_type=self.result.media_type,
             user_id=user_id,
         )
-        self.embed.title = f"Request for {self.embed.title} Sent! 🎉"
-        self.disable_all_items()
-        self.clear_items()
-        self.stop()
-        await interaction.edit_original_response(embed=self.embed, view=self)
+        await interaction.edit_original_response(
+            content=f"Request for {self.embed.title} sent! 🎉"
+        )
 
     @discord.ui.button(style=discord.ButtonStyle.danger, label="Cancel")
     async def cancel(
@@ -296,17 +308,26 @@ class SearchView(OverseerrView):
         # Request button
         if self.result.media_type == "person":
             self.children[2].disabled = True
+            return
+        if isinstance(self.result, (MovieResult)):
+            name = self.result.title
         else:
-            status = self.result.media_info.status
-            status_map = {
-                1: "Request",
-                2: "Pending",
-                3: "Processing",
-                4: "Partiallly Available",
-                5: "Available",
-            }
-            self.children[2].disabled = status != 1
-            self.children[2].label = status_map.get(status, "Request")
+            name = self.result.name
+        status = self.result.media_info.status
+        if status is None:
+            self.children[2].label = "Request"
+            self.children[2].disabled = False
+            return
+        logger.trace("Media status for %s: %d", name, status)
+        status_map = {
+            1: "Request",
+            2: "Pending",
+            3: "Processing",
+            4: "Partiallly Available",
+            5: "Available",
+        }
+        self.children[2].disabled = status != 1
+        self.children[2].label = status_map.get(status, "Request")
 
     async def _edit_embed(self) -> None:
         if self._results.results == []:
@@ -319,11 +340,7 @@ class SearchView(OverseerrView):
             self.stop()
             return
 
-        self.clear_embed()
         await self._update_buttons()
-        if self._genre_id_map == {}:
-            await self.setup_genre_id_map()
-
         self.media_common_embed(self.result)
 
     @property
@@ -336,8 +353,10 @@ class RequestsView(OverseerrView):
         self,
         requests: Requests,
         overseerr_client: OverseerrAPI,
+        genre_id_map: GenreIDMap,
+        discord_id_map: Dict[int, int],
         user_id: int,
-        params,
+        params: Dict[str, Any],
         *items: Item,
         timeout: float | None = 180,
         disable_on_timeout: bool = False,
@@ -345,6 +364,8 @@ class RequestsView(OverseerrView):
         super().__init__(
             overseerr_client=overseerr_client,
             user_id=user_id,
+            genre_id_map=genre_id_map,
+            discord_id_map=discord_id_map,
             *items,
             timeout=timeout,
             disable_on_timeout=disable_on_timeout,
@@ -354,7 +375,6 @@ class RequestsView(OverseerrView):
         self._requests_length: int = (
             requests.page_info.pages * requests.page_info.page_size
         )
-        self._discord_id_map: Dict[int, int] = {}
         self._params = params
 
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
@@ -391,15 +411,20 @@ class RequestsView(OverseerrView):
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
         button.disabled = True
+        self.disable_all_items()
+        self.stop()
+        await interaction.response.edit_message(
+            view=self, embed=self.embed, content="Approving..."
+        )
         resp = await self.overseerr_client.approve_request(self.request.id)
         logger.debug(
             "Sent approval request for {}, (ID: {})", self.embed.title, self.request.id
         )
-        logger.trace(resp)
-        self.embed.title = f"Request for {self.embed.title} Approved! 🎉"
-        self.disable_all_items()
-        self.stop()
-        await interaction.response.edit_message(embed=self.embed, view=self)
+        logger.trace("Response body: %s", resp)
+
+        await interaction.edit_original_response(
+            content=f"Request for {self.embed.title} Approved! 🎉"
+        )
 
     @discord.ui.button(style=discord.ButtonStyle.danger, label="Deny")
     async def cancel(
@@ -407,8 +432,13 @@ class RequestsView(OverseerrView):
     ) -> None:
         self.disable_all_items()
         self.stop()
+        await interaction.response.edit_message(
+            view=self, embed=self.embed, content="Denying..."
+        )
         await self.overseerr_client.deny_request(self.request.id)
-        await interaction.response.edit_message(view=self)
+        await interaction.edit_original_response(
+            content=f"Request for {self.embed.title} denied"
+        )
 
     async def _paginate(self, interaction: discord.Interaction) -> None:
         await self._edit_embed()
@@ -424,8 +454,6 @@ class RequestsView(OverseerrView):
         self.children[1].disabled = self.result_number == self.page_info.results
 
     async def _edit_embed(self) -> None:
-        if self._genre_id_map == {}:
-            await self.setup_genre_id_map()
         if self.page_info.results == 0:
             self.embed.title = "No requests"
             self.embed.description = f"No current requests. You are caught up."
@@ -433,10 +461,7 @@ class RequestsView(OverseerrView):
             self.stop()
             return
         await self._update_buttons()
-        if self.genre_id_map == {}:
-            await self.setup_genre_id_map()
 
-        media_type = self.request.media.media_type
         result: Union[MovieDetails, TVDetails] = await self.get_request_info(
             self.request.media
         )
