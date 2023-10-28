@@ -35,7 +35,7 @@ class Overseerr(commands.Cog):
 
     @tasks.loop(hours=1)
     async def map_discord_ids(self):
-        log.info("Updating discord id map...")
+        log.debug("Updating discord id map...")
         discord_id_map = {}
         users = await self.overseerr_client.users()
         for user in users.results:
@@ -44,6 +44,7 @@ class Overseerr(commands.Cog):
 
         self._discord_id_map = discord_id_map
         log.info("Updated discord user id map")
+        log.trace("Id map: %s", discord_id_map)
 
     @tasks.loop(hours=168)
     async def map_genre_ids(self):

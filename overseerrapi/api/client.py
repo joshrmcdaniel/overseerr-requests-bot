@@ -233,7 +233,7 @@ class OverseerrAPI:
         if media_type not in ["movie", "tv"]:
             raise RuntimeError(f"Invalid media type {media_type}")
 
-        body = RequestBody(id=media_id, media_type=media_type, user_id=user_id)
+        body = RequestBody(media_id=media_id, media_type=media_type, user_id=user_id)
         return await post(
             self._url + "/request", body=body.to_json(), headers=self._headers
         )

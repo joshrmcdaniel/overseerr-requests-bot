@@ -9,7 +9,7 @@ from .user import User
 
 
 class RequestBody(jsonobject.JsonObject):
-    id = jsonobject.IntegerProperty(name="id", required=True)
+    media_id = jsonobject.IntegerProperty(name="mediaId", required=True)
     user_id = jsonobject.IntegerProperty(name="userId", required=True)
     tvdbId = jsonobject.IntegerProperty(name="tvdbId", exclude_if_none=True)
     seasons = jsonobject.DefaultProperty(name="seasons", exclude_if_none=True)
@@ -20,6 +20,7 @@ class RequestBody(jsonobject.JsonObject):
     language_profile_id = jsonobject.IntegerProperty(
         name="languageProfileId", exclude_if_none=True
     )
+    media_type = jsonobject.StringProperty(name="mediaType", required=True)
 
 
 class Request(jsonobject.JsonObject):

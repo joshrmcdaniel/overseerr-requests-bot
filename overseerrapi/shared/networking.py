@@ -82,7 +82,9 @@ async def post(
             except aiohttp.ClientResponseError as cre:
                 logger.error(f"Error while requesting %s: %s", url, cre)
                 try:
-                    return load_error(resp)
+                    err = load_error(resp)
+                    logger.error("Error response: %s", err)
+                    return resp
                 except Exception as e:
                     logger.error("Error while loading error response: %s", e)
                     raise e from cre
