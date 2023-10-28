@@ -274,16 +274,15 @@ class SearchView(OverseerrView):
             view=self,
             embed=self.embed,
         )
-        user_id = self._discord_id_map.get(interaction.user.id, None)
-        if user_id is None:
-            await interaction.edit_original_response(
-                content="You are not registered with Overseerr."
-            )
-            return
+        # user_id = self._discord_id_map.get(interaction.user.id, None)
+        # if user_id is None:
+        #     await interaction.edit_original_response(
+        #         content="You are not registered with Overseerr."
+        #     )
+        #     return
         await self.overseerr_client.post_request(
             media_id=self.result.id,
             media_type=self.result.media_type,
-            user_id=user_id,
         )
         await interaction.edit_original_response(
             content=f"Request for {self.embed.title} sent! 🎉"

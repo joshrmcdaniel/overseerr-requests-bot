@@ -10,7 +10,7 @@ from .user import User
 
 class RequestBody(jsonobject.JsonObject):
     media_id = jsonobject.IntegerProperty(name="mediaId", required=True)
-    user_id = jsonobject.IntegerProperty(name="userId", required=True)
+    user_id = jsonobject.IntegerProperty(name="userId")
     tvdbId = jsonobject.IntegerProperty(name="tvdbId", exclude_if_none=True)
     seasons = jsonobject.DefaultProperty(name="seasons", exclude_if_none=True)
     is_4k = jsonobject.BooleanProperty(name="is4k", exclude_if_none=True)
@@ -34,7 +34,7 @@ class Request(jsonobject.JsonObject):
     requested_by = jsonobject.ObjectProperty(
         lambda: User, name="requestedBy", required=True
     )
-    modified_by = jsonobject.DefaultProperty(lambda: User, name="modifiedBy")
+    modified_by = jsonobject.ObjectProperty(lambda: User, name="modifiedBy")
     is_4k = jsonobject.BooleanProperty(name="is4k")
     server_id = jsonobject.IntegerProperty(name="serverId")
     profile_id = jsonobject.IntegerProperty(name="profileId")

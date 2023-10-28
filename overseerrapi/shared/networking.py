@@ -36,6 +36,7 @@ async def get(
     *,
     params: Optional[Dict[str, str]] = None,
     headers: Optional[Dict[str, str]] = None,
+    cookies: Optional[Any] = None,
 ) -> R:
     logger.debug("Sending GET requests to %s", url)
     logger.trace("Parameters: %s", params)
@@ -44,8 +45,8 @@ async def get(
             f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items()
         )
         url = f"{url}?{params}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as r:
+    async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
+        async with session.get(url) as r:
             try:
                 resp = await r.json(loads=DECODER)
                 logger.debug("Received response %d from %s", r.status, url)
@@ -70,12 +71,16 @@ async def post(
     *,
     body: Optional[Dict[str, str]] = None,
     headers: Optional[Dict[str, str]] = None,
+    raw: bool = False,
+    cookies: Optional[Any] = None,
 ) -> R:
     if body:
         body = json.dumps(body).encode("ascii")
-    async with aiohttp.ClientSession(headers=headers) as session:
+    async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
         async with session.post(url, data=body) as r:
             try:
+                if raw:
+                    return r
                 resp = await r.json(loads=DECODER)
                 logger.debug("Received response %d from %s", r.status, url)
                 r.raise_for_status()

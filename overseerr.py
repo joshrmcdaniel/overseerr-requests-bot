@@ -21,6 +21,8 @@ class Overseerr(commands.Cog):
         self._bot = bot
         self.overseerr_client = OverseerrAPI(
             url=os.environ.get("OVERSEERR_URL"),
+            email=os.environ.get("OVERSEERR_USER"),
+            password=os.environ.get("OVERSEERR_PASS"),
             api_key=os.environ.get("OVERSEERR_API_KEY"),
         )
 
@@ -28,7 +30,7 @@ class Overseerr(commands.Cog):
     async def on_ready(self):
         log.info("Overseerr cog loading...")
         log.info("Starting Discord ID map task..")
-        self.map_discord_ids.start()
+        # self.map_discord_ids.start()
         self.map_genre_ids.start()
         log.info("Discord ID map task started")
         log.info("Overseerr cog ready.")
@@ -166,7 +168,7 @@ class Overseerr(commands.Cog):
         return RequestsView(
             user_id=user_id,
             overseerr_client=self.overseerr_client,
-            discord_id_map=self._discord_id_map,
+            discord_id_map={},  # self._discord_id_map,
             genre_id_map=self._genre_id_map,
             requests=requests,
             params=params,
@@ -180,7 +182,7 @@ class Overseerr(commands.Cog):
             overseerr_client=self.overseerr_client,
             results=results,
             search_query=search_query,
-            discord_id_map=self._discord_id_map,
+            discord_id_map={},  # self._discord_id_map,
             genre_id_map=self._genre_id_map,
         )
 

@@ -1,6 +1,7 @@
 import logging
 import sys
 import jsonobject
+import asyncio
 from functools import partial, partialmethod
 from typing import (
     Dict,
@@ -23,14 +24,17 @@ class OverseerrAPI:
     def __init__(
         self,
         url: str,
-        api_key: str,
         *,
+        api_key: Optional[str] = None,
+        email: Optional[str] = None,
+        password: Optional[str] = None,
         log_level: str = "INFO",
         log_file: str | TextIO = sys.stderr,
     ) -> Self:
         setup_logging()
         self._url = url
         self._api_key = api_key
+        self._me = None
         self._logger = logging.getLogger(__name__)
         ch = logging.StreamHandler(log_file)
         formatter = logging.Formatter(
@@ -40,7 +44,21 @@ class OverseerrAPI:
         ch.setLevel(log_level.upper())
         self._logger.addHandler(ch)
         self._logger.debug("Initialized OverseerrAPI")
-        self._logger.trace("TEST")
+        if email and password:
+            self._logger.debug("Logging in with email and password")
+            login = asyncio.run(
+                post(
+                    self._url + "/auth/local",
+                    body={"email": email, "password": password},
+                    headers=self._headers,
+                    raw=True,
+                )
+            )
+            if login.status != 200:
+                self._logger.error("Error while logging in: %s", login.json())
+                raise Exception
+            self.__cookies = login.cookies
+            self._logger.debug("Successfully logged in")
 
     async def search(
         self, query: str, page: int = 1
@@ -56,7 +74,12 @@ class OverseerrAPI:
         """
         self._logger.debug("Searching for %s on page %d", query, page)
         params = {"query": query, "page": 1}
-        res = await get(self._url + "/search", params=params, headers=self._headers)
+        res = await get(
+            self._url + "/search",
+            params=params,
+            headers=self._headers,
+            cookies=self._cookies,
+        )
         if isinstance(res, ErrorResponse):
             self._logger.error("Error while searching for %s: %s", query, res.error)
             raise Exception(res.error)
@@ -88,7 +111,9 @@ class OverseerrAPI:
         :return: The user, or an error
         :rtype: Union[User, ErrorResponse]
         """
-        return await get(self._url + f"/user/{id}", headers=self._headers)
+        return await get(
+            self._url + f"/user/{id}", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=UserSearchResult)
     async def users(self) -> Union[UserSearchResult, ErrorResponse]:
@@ -98,7 +123,9 @@ class OverseerrAPI:
         :return: All users, or an error
         :rtype: Union[UserSearchResult, ErrorResponse]
         """
-        return await get(self._url + "/user", headers=self._headers)
+        return await get(
+            self._url + "/user", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=Request)
     async def get_request(self, id: int) -> Union[Request, ErrorResponse]:
@@ -110,7 +137,9 @@ class OverseerrAPI:
         :return: The request, or an error
         :rtype: Union[Request, ErrorResponse]
         """
-        return await get(self._url + f"/request/{id}", headers=self._headers)
+        return await get(
+            self._url + f"/request/{id}", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=MovieDetails)
     async def get_movie(self, id: int) -> Union[MovieDetails, ErrorResponse]:
@@ -122,7 +151,9 @@ class OverseerrAPI:
         :return: The movie, or an error
         :rtype: Union[MovieDetails, ErrorResponse]
         """
-        return await get(self._url + f"/movie/{id}", headers=self._headers)
+        return await get(
+            self._url + f"/movie/{id}", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=MovieSearchResult)
     async def get_movie_recommendations(
@@ -137,7 +168,9 @@ class OverseerrAPI:
         :rtype: Union[MovieSearchResult, ErrorResponse]
         """
         return await get(
-            self._url + f"/movie/{id}/recommendations", headers=self._headers
+            self._url + f"/movie/{id}/recommendations",
+            headers=self._headers,
+            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=TVDetails)
@@ -150,7 +183,9 @@ class OverseerrAPI:
         :return: The TV show, or an error
         :rtype: Union[TVDetails, ErrorResponse]
         """
-        return await get(self._url + f"/tv/{id}", headers=self._headers)
+        return await get(
+            self._url + f"/tv/{id}", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=TVDetails)
     async def get_tv_season(
@@ -166,7 +201,11 @@ class OverseerrAPI:
         :return: The TV season, or an error
         :rtype: Union[TVSeason, ErrorResponse]
         """
-        return await get(self._url + f"/tv/{id}/season/{season}", headers=self._headers)
+        return await get(
+            self._url + f"/tv/{id}/season/{season}",
+            headers=self._headers,
+            cookies=self._cookies,
+        )
 
     @request_with_type(overseerr_type=TVSearchResponse)
     async def get_tv_recommendations(self, id: int):
@@ -178,7 +217,11 @@ class OverseerrAPI:
         :return: The TV show recommendations, or an error
         :rtype: Union[TVSearchResponse, ErrorResponse]
         """
-        return await get(self._url + f"/tv/{id}/recommendations", headers=self._headers)
+        return await get(
+            self._url + f"/tv/{id}/recommendations",
+            headers=self._headers,
+            cookies=self._cookies,
+        )
 
     @request_with_type(overseerr_type=Genre)
     async def _get_genre(self, media_type: str) -> Union[List[Genre], ErrorResponse]:
@@ -192,7 +235,11 @@ class OverseerrAPI:
         """
         if media_type not in ["tv", "movie"]:
             raise RuntimeError(f"Invalid media type {media_type}")
-        return await get(self._url + f"/genres/{media_type}", headers=self._headers)
+        return await get(
+            self._url + f"/genres/{media_type}",
+            headers=self._headers,
+            cookies=self._cookies,
+        )
 
     @request_with_type(overseerr_type=Genre)
     async def get_tv_genres(self) -> Union[Genre, ErrorResponse]:
@@ -202,7 +249,9 @@ class OverseerrAPI:
         :return: TV genres, or an error
         :rtype: Union[Genre, ErrorResponse]
         """
-        return await get(self._url + f"/genres/tv", headers=self._headers)
+        return await get(
+            self._url + f"/genres/tv", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=Genre)
     async def get_movie_genres(self) -> Union[Genre, ErrorResponse]:
@@ -212,11 +261,13 @@ class OverseerrAPI:
         :return: Movie genres, or an error
         :rtype: Union[Genre, ErrorResponse]
         """
-        return await get(self._url + f"/genres/movie", headers=self._headers)
+        return await get(
+            self._url + f"/genres/movie", headers=self._headers, cookies=self._cookies
+        )
 
     @request_with_type(overseerr_type=Request)
     async def post_request(
-        self, media_id: int, media_type: str, user_id: int
+        self, media_id: int, media_type: str, user_id: Optional[int] = None
     ) -> Union[Request, ErrorResponse]:
         """
         Add a request for a movie or TV show
@@ -232,10 +283,12 @@ class OverseerrAPI:
         """
         if media_type not in ["movie", "tv"]:
             raise RuntimeError(f"Invalid media type {media_type}")
-
         body = RequestBody(media_id=media_id, media_type=media_type, user_id=user_id)
         return await post(
-            self._url + "/request", body=body.to_json(), headers=self._headers
+            self._url + "/request",
+            body=body.to_json(),
+            headers=self._headers,
+            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=Request)
@@ -244,15 +297,21 @@ class OverseerrAPI:
     ) -> Union[Request, ErrorResponse]:
         if status not in ["approve", "decline"]:
             raise RuntimeError(f"Invalid status {status}")
-        return await post(self._url + f"/request/{id}/{status}", headers=self._headers)
+        return await post(
+            self._url + f"/request/{id}/{status}", headers=self._headers_with_token
+        )
 
     @request_with_type(overseerr_type=Request)
     async def deny_request(self, id: int) -> Union[Request, ErrorResponse]:
-        return await post(self._url + f"/request/{id}/decline", headers=self._headers)
+        return await post(
+            self._url + f"/request/{id}/decline", headers=self._headers_with_token
+        )
 
     @request_with_type(overseerr_type=Request)
     async def approve_request(self, id: int) -> Union[Request, ErrorResponse]:
-        return await post(self._url + f"/request/{id}/approve", headers=self._headers)
+        return await post(
+            self._url + f"/request/{id}/approve", headers=self._headers_with_token
+        )
 
     @request_with_type(overseerr_type=Requests)
     async def get_all_requests(
@@ -302,17 +361,42 @@ class OverseerrAPI:
         }
         if requested_by is not None:
             params["requestedBy"] = requested_by
-        return await get(self._url + "/request", params=params, headers=self._headers)
+        return await get(
+            self._url + "/request",
+            params=params,
+            headers=self._headers,
+            cookies=self._cookies,
+        )
+
+    @request_with_type(overseerr_type=User)
+    async def _get_me(self) -> Union[User, ErrorResponse]:
+        return await get(
+            self._url + "/auth/me", headers=self._headers, cookies=self._cookies
+        )
 
     @property
     def _headers(self) -> Dict[str, str]:
         """
         Headers to send with every request. Don't use this directly.
-
+        If user/pass
         :return: Overseerr headers
         :rtype: Dict[str, str]
         """
-        return {"X-Api-Key": self._api_key, "Content-Type": "application/json"}
+        return {"Content-Type": "application/json"}
+
+    @property
+    def _headers_with_token(self) -> Dict[str, str]:
+        return dict(**self._headers, **{"X-Api-Key": self._api_key})
+
+    @property
+    def _cookies(self):
+        return self.__cookies
+
+    @property
+    def me(self) -> User:
+        if self._me is None:
+            self._me = asyncio.run(self._get_me())
+        return self._me
 
 
 def setup_logging():

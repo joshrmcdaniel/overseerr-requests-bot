@@ -5,8 +5,8 @@ from .notification import NotificationTypes
 
 
 class User(jsonobject.JsonObject):
-    id = jsonobject.IntegerProperty(name="id", required=True)
-    email = jsonobject.StringProperty(name="email", required=True)
+    id = jsonobject.IntegerProperty(name="id")
+    email = jsonobject.StringProperty(name="email")
     username = jsonobject.StringProperty(name="username")
     plex_token = jsonobject.StringProperty(name="plexToken")
     plexUsername = jsonobject.StringProperty(name="plexUsername")
