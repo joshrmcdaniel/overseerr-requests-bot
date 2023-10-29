@@ -267,7 +267,7 @@ class OverseerrAPI:
 
     @request_with_type(overseerr_type=Request)
     async def post_request(
-        self, media_id: int, media_type: str, user_id: Optional[int] = None
+        self, media_id: int, media_type: str, user_id: Optional[int] = None, seasons: Union[List[int],str] = "all"
     ) -> Union[Request, ErrorResponse]:
         """
         Add a request for a movie or TV show
@@ -283,7 +283,12 @@ class OverseerrAPI:
         """
         if media_type not in ["movie", "tv"]:
             raise RuntimeError(f"Invalid media type {media_type}")
-        body = RequestBody(media_id=media_id, media_type=media_type, user_id=user_id)
+        body = RequestBody(media_id=media_id, media_type=media_type)
+        if media_type == "tv":
+            body.seasons = seasons
+        if user_id:
+            body.user_id = user_id
+        self._logger.debug("Request body: %s", body.to_json())
         return await post(
             self._url + "/request",
             body=body.to_json(),

@@ -10,8 +10,9 @@ from .user import User
 
 class RequestBody(jsonobject.JsonObject):
     media_id = jsonobject.IntegerProperty(name="mediaId", required=True)
+    media_type = jsonobject.StringProperty(name="mediaType", required=True)
     user_id = jsonobject.IntegerProperty(name="userId")
-    tvdbId = jsonobject.IntegerProperty(name="tvdbId", exclude_if_none=True)
+    tvdb_id = jsonobject.IntegerProperty(name="tvdbId", exclude_if_none=True)
     seasons = jsonobject.DefaultProperty(name="seasons", exclude_if_none=True)
     is_4k = jsonobject.BooleanProperty(name="is4k", exclude_if_none=True)
     server_id = jsonobject.IntegerProperty(name="serverId", exclude_if_none=True)
