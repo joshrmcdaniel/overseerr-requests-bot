@@ -1,7 +1,7 @@
 import logging
 import sys
-import jsonobject
 import asyncio
+from aiohttp import ClientResponse, ClientResponseError
 from functools import partial, partialmethod
 from typing import (
     Dict,
@@ -14,6 +14,7 @@ from typing import (
 )
 from ..shared.networking import get, post, put
 from ..types import *
+from ..types.load import load_error
 from ..shared.wrappers import _request_with_type as request_with_type
 
 
@@ -35,6 +36,9 @@ class OverseerrAPI:
         self._url = url
         self._api_key = api_key
         self._me = None
+        self._password: str = password
+        self._email: str = email
+
         self._logger = logging.getLogger(__name__)
         ch = logging.StreamHandler(log_file)
         formatter = logging.Formatter(
@@ -44,21 +48,35 @@ class OverseerrAPI:
         ch.setLevel(log_level.upper())
         self._logger.addHandler(ch)
         self._logger.debug("Initialized OverseerrAPI")
+
         if email and password:
-            self._logger.debug("Logging in with email and password")
-            login = asyncio.run(
-                post(
-                    self._url + "/auth/local",
-                    body={"email": email, "password": password},
-                    headers=self._headers,
-                    raw=True,
-                )
-            )
-            if login.status != 200:
-                self._logger.error("Error while logging in: %s", login.json())
-                raise Exception
-            self.__cookies = login.cookies
-            self._logger.debug("Successfully logged in")
+            asyncio.run(self._login(email, password))
+
+    async def _login(self, email: Optional[str], password: Optional[str]) -> None:
+        self._logger.debug("Logging in with email and password")
+        if email is None:
+            email = self._email
+        if email is None:
+            raise RuntimeError("No email specified.")
+        if password is None:
+            if self._password is None:
+                raise RuntimeError("No password specified for authentication.")
+            password = self._password
+
+        login: ClientResponse = post(
+            self._url + "/auth/local",
+            body={"email": email, "password": password},
+            headers=self._headers,
+            raw=True,
+        )
+        try:
+            login.raise_for_status()
+        except ClientResponseError as cre:
+            login_err = load_error(login.json())
+            self._logger.error("Error while logging in: %s", login_err.message)
+            raise cre
+        self.__cookies = login.cookies
+        self._logger.debug("Successfully logged in")
 
     async def search(
         self, query: str, page: int = 1
@@ -81,8 +99,8 @@ class OverseerrAPI:
             cookies=self._cookies,
         )
         if isinstance(res, ErrorResponse):
-            self._logger.error("Error while searching for %s: %s", query, res.error)
-            raise Exception(res.error)
+            self._logger.error("Error while searching for %s: %s", query, res.message)
+            raise Exception(res.message)
         # results key is unknown until runtime
         results = res.pop("results")
         res = _load_type(json_data=res, overseerr_type=MediaSearchResult)
@@ -224,7 +242,7 @@ class OverseerrAPI:
         )
 
     @request_with_type(overseerr_type=Genre)
-    async def _get_genre(self, media_type: str) -> Union[List[Genre], ErrorResponse]:
+    async def _get_genre(self, media_type: MEDIA_TYPES) -> Union[List[Genre], ErrorResponse]:
         """
         Backing function for get_tv_genres and get_movie_genres. Don't use this directly.
 
@@ -233,7 +251,7 @@ class OverseerrAPI:
         :return: The genres, or an error
         :rtype: Union[List[Genre], ErrorResponse]
         """
-        if media_type not in ["tv", "movie"]:
+        if media_type not in MEDIA_TYPES:
             raise RuntimeError(f"Invalid media type {media_type}")
         return await get(
             self._url + f"/genres/{media_type}",
@@ -267,7 +285,7 @@ class OverseerrAPI:
 
     @request_with_type(overseerr_type=Request)
     async def post_request(
-        self, media_id: int, media_type: str, user_id: Optional[int] = None, seasons: Union[List[int],str] = "all"
+        self, media_id: int, media_type: MediaTypes, user_id: Optional[int] = None, seasons: Union[List[int], Literal['all']] = "all"
     ) -> Union[Request, ErrorResponse]:
         """
         Add a request for a movie or TV show
@@ -281,7 +299,7 @@ class OverseerrAPI:
         :return: The request, or an error
         :rtype: Union[Request, ErrorResponse]
         """
-        if media_type not in ["movie", "tv"]:
+        if media_type not in MEDIA_TYPES:
             raise RuntimeError(f"Invalid media type {media_type}")
         body = RequestBody(media_id=media_id, media_type=media_type)
         if media_type == "tv":
@@ -324,8 +342,8 @@ class OverseerrAPI:
         *,
         take: int = 20,
         skip: int = 0,
-        filter_by: str = "all",
-        sort: str = "added",
+        filter_by: str = RequestsFilterByOpts,
+        sort: str = RequestsSortOpts,
         requested_by: Optional[int] = None,
     ) -> Union[Requests, ErrorResponse]:
         """
@@ -344,19 +362,9 @@ class OverseerrAPI:
         :return: The requests, or an error
         :rtype: Union[Requests, ErrorResponse]
         """
-        filter_by_options = [
-            "all",
-            "approved",
-            "available",
-            "pending",
-            "processing",
-            "unavailable",
-            "failed",
-        ]
-        sort_options = ["added", "modified"]
-        if filter_by not in filter_by_options:
+        if filter_by not in REQUESTS_FILTER_OPTS:
             raise RuntimeError(f"Invalid filter: {filter_by}")
-        if sort not in sort_options:
+        if sort not in REQUESTS_SORT_OPTS:
             raise RuntimeError(f"Invalid sort: `{sort}`")
         params = {
             "take": take,

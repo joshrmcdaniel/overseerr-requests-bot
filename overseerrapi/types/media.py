@@ -1,5 +1,7 @@
 import jsonobject
 
+from typing import get_args, Literal
+
 
 class MediaInfo(jsonobject.JsonObject):
     id = jsonobject.IntegerProperty(name="id")
@@ -14,6 +16,7 @@ class MediaInfo(jsonobject.JsonObject):
 
 class PersonResult(jsonobject.JsonObject):
     adult = jsonobject.BooleanProperty(name="adult")
+    name = jsonobject.StringProperty(name="name")
     id = jsonobject.IntegerProperty(name="id")
     known_for = jsonobject.ListProperty(
         jsonobject.DefaultProperty(), name="knownFor"
@@ -32,6 +35,10 @@ RELATED_VIDEO_TYPES = [
     "Bloopers",
 ]
 
+MediaTypes = Literal["tv", "movie"]
+MediaSearchTypes = Literal["tv", "movie", "person"]
+MEDIA_TYPES_SEARCH = get_args(MediaSearchTypes)
+MEDIA_TYPES = get_args(MediaTypes)
 
 class RelatedVideo(jsonobject.JsonObject):
     url = jsonobject.StringProperty(name="url")

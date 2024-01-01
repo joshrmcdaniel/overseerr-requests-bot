@@ -12,16 +12,19 @@ from .media import (
     Collection,
     ExternalIds,
     WatchProvider,
+    MEDIA_TYPES,
+    MEDIA_TYPES_SEARCH,
+    MediaSearchTypes,
+    MediaTypes
 )
 
 from .movie import MovieDetails, MovieResult, MovieSearchResult
-from .genre import Genre, Genres
 from .tv import TvResult, TVDetails, TVEpisode, TVSeason, TVSearchResponse
 from .search import MediaSearchResult, UserSearchResult
 from .error import ErrorResponse
 from .user import User
 from .load import load_json as _load_type
-from .requests import Requests, Request, RequestCount, RequestBody
+from .requests import Requests, Request, RequestCount, RequestBody, RequestsFilterByOpts, RequestsSortOpts, REQUESTS_FILTER_OPTS, REQUESTS_SORT_OPTS
 from .genre import Genre, Genres
 from .shared import PageInfo
 
@@ -39,12 +42,18 @@ __all__ = [
     "Request",
     "Requests",
     "RequestCount",
+    "RequestSortOpts",
+    "RequestsFilterByOpts", "RequestsSortOpts", "REQUESTS_FILTER_OPTS", "REQUESTS_SORT_OPTS",
     "Genre",
     "Genres",
     "Rating",
     "MovieDetails",
     "TVDetails",
     "TVSeason",
+    "MEDIA_TYPES",
+    "MEDIA_TYPES_SEARCH",
+    "MediaSearchTypes",
+    "MediaTypes",
     "TVSearchResponse",
     "ProductionCountry",
     "MovieSearchResult",

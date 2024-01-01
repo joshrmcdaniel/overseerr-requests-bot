@@ -11,7 +11,7 @@ from json import JSONDecoder
 
 logger = logging.getLogger(__name__)
 
-R = TypeVar("R", Dict, List[Dict], ErrorResponse)
+R = TypeVar("R", Dict, List[Dict], ErrorResponse, aiohttp.ClientResponse)
 
 __all__ = ["get", "post", "put"]
 
@@ -78,9 +78,9 @@ async def post(
         body = json.dumps(body).encode("ascii")
     async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
         async with session.post(url, data=body) as r:
+            if raw:
+                return r
             try:
-                if raw:
-                    return r
                 resp = await r.json(loads=DECODER)
                 logger.debug("Received response %d from %s", r.status, url)
                 r.raise_for_status()
@@ -88,7 +88,8 @@ async def post(
                 logger.error(f"Error while requesting %s: %s", url, cre)
                 try:
                     resp = load_error(resp)
-                    logger.error("Error response: %s", resp)
+                    for error in resp.errors:
+                        logger.error("Error response for %s: %s",  error.path, error.message)
                 except Exception as e:
                     logger.error("Error while loading error response: %s", e)
                     raise e from cre

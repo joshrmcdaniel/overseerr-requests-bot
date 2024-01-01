@@ -1,12 +1,31 @@
+from typing import Literal, get_args
+
 import jsonobject
 
 
-from .shared import PageInfo
-
-
 from .media import MediaInfo
+from .shared import PageInfo
 from .user import User
 
+
+RequestsSortOpts = Literal[
+    "added",
+    "modified"
+]
+REQUESTS_SORT_OPTS = get_args(RequestsSortOpts)
+
+
+RequestsFilterByOpts = Literal[
+    "all",
+    "approved",
+    "available",
+    "pending",
+    "processing",
+    "unavailable",
+    "failed"
+]
+
+REQUESTS_FILTER_OPTS = get_args(RequestsFilterByOpts)
 
 class RequestBody(jsonobject.JsonObject):
     media_id = jsonobject.IntegerProperty(name="mediaId", required=True)

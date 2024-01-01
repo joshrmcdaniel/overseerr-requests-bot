@@ -9,7 +9,7 @@ class User(jsonobject.JsonObject):
     email = jsonobject.StringProperty(name="email")
     username = jsonobject.StringProperty(name="username")
     plex_token = jsonobject.StringProperty(name="plexToken")
-    plexUsername = jsonobject.StringProperty(name="plexUsername")
+    plex_username = jsonobject.StringProperty(name="plexUsername")
     user_type = jsonobject.IntegerProperty(name="userType")
     permissions = jsonobject.IntegerProperty(name="permissions")
     avatar = jsonobject.StringProperty(name="avatar")
