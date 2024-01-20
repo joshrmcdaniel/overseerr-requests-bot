@@ -24,7 +24,7 @@ def _request_with_type(overseerr_type, raise_for_error=False):
         @wraps(f)
         async def wrapper(*args, **kwargs):
             res = await f(*args, **kwargs)
-            print(type(res))
+
             if isinstance(res, ErrorResponse):
                 if raise_for_error:
                     raise RuntimeError(res.message)

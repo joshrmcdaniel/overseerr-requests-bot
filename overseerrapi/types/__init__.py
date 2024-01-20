@@ -42,7 +42,7 @@ __all__ = [
     "Request",
     "Requests",
     "RequestCount",
-    "RequestSortOpts",
+    "RequestsSortOpts",
     "RequestsFilterByOpts", "RequestsSortOpts", "REQUESTS_FILTER_OPTS", "REQUESTS_SORT_OPTS",
     "Genre",
     "Genres",

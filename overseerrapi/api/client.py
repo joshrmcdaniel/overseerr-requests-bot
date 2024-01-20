@@ -63,12 +63,13 @@ class OverseerrAPI:
                 raise RuntimeError("No password specified for authentication.")
             password = self._password
 
-        login: ClientResponse = post(
+        login: ClientResponse = await post(
             self._url + "/auth/local",
             body={"email": email, "password": password},
             headers=self._headers,
             raw=True,
         )
+        print(login)
         try:
             login.raise_for_status()
         except ClientResponseError as cre:
@@ -78,6 +79,8 @@ class OverseerrAPI:
         self.__cookies = login.cookies
         self._logger.debug("Successfully logged in")
 
+
+    @request_with_type(overseerr_type=MediaSearchResult)
     async def search(
         self, query: str, page: int = 1
     ) -> Union[MediaSearchResult, ErrorResponse]:
@@ -92,32 +95,12 @@ class OverseerrAPI:
         """
         self._logger.debug("Searching for %s on page %d", query, page)
         params = {"query": query, "page": 1}
-        res = await get(
+        return await get(
             self._url + "/search",
             params=params,
             headers=self._headers,
             cookies=self._cookies,
         )
-        if isinstance(res, ErrorResponse):
-            self._logger.error("Error while searching for %s: %s", query, res.message)
-            raise Exception(res.message)
-        # results key is unknown until runtime
-        results = res.pop("results")
-        res = _load_type(json_data=res, overseerr_type=MediaSearchResult)
-        res.results = []
-        if isinstance(res, MediaSearchResult):
-            # it is certain that the results key will be a list of MovieResult, TvResult, or PersonResult
-            # if the result is a MediaSearchResult
-            res_map = {"person": PersonResult, "movie": MovieResult, "tv": TvResult}
-            if results:
-                for result in results:
-                    self._logger.debug("Found result %s", result)
-                    typed_json = _load_type(
-                        overseerr_type=res_map[result["mediaType"]], json_data=result
-                    )
-                    res.results.append(typed_json)
-
-        return res
 
     @request_with_type(overseerr_type=User)
     async def user(self, id: int) -> Union[User, ErrorResponse]:
@@ -342,8 +325,8 @@ class OverseerrAPI:
         *,
         take: int = 20,
         skip: int = 0,
-        filter_by: str = RequestsFilterByOpts,
-        sort: str = RequestsSortOpts,
+        filter_by: RequestsFilterByOpts = 'pending',
+        sort: RequestsSortOpts = 'added',
         requested_by: Optional[int] = None,
     ) -> Union[Requests, ErrorResponse]:
         """

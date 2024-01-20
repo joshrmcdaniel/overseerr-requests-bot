@@ -74,10 +74,8 @@ async def post(
     raw: bool = False,
     cookies: Optional[Any] = None,
 ) -> R:
-    if body:
-        body = json.dumps(body).encode("ascii")
     async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-        async with session.post(url, data=body) as r:
+        async with session.post(url, json=body) as r:
             if raw:
                 return r
             try:
@@ -102,10 +100,8 @@ async def put(
     body: Optional[Dict[str, str]] = None,
     headers: Optional[Dict[str, str]] = None,
 ) -> R:
-    if body:
-        body = json.dumps(body).encode("ascii")
     async with aiohttp.ClientSession(headers=headers) as session:
-        async with session.put(url, data=body) as r:
+        async with session.put(url, json=body) as r:
             try:
                 resp = await r.json(loads=DECODER)
                 r.raise_for_status()
