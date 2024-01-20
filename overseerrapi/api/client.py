@@ -79,7 +79,6 @@ class OverseerrAPI:
         self.__cookies = login.cookies
         self._logger.debug("Successfully logged in")
 
-
     @request_with_type(overseerr_type=MediaSearchResult)
     async def search(
         self, query: str, page: int = 1
@@ -94,13 +93,27 @@ class OverseerrAPI:
         :rtype: Union[MediaSearchResult, ErrorResponse]
         """
         self._logger.debug("Searching for %s on page %d", query, page)
-        params = {"query": query, "page": 1}
+        params = {"query": query, "page": page}
         return await get(
             self._url + "/search",
             params=params,
             headers=self._headers,
             cookies=self._cookies,
         )
+    
+    async def search_res_iterator(
+        self, query: str, page: int = 1
+    ):
+        resp: MediaSearchResult = await self.search(query, page)
+        page_num = 0
+        while page_num < resp.total_pages:
+            page_num = resp.page
+            for res in resp.results:
+                yield res
+                
+            if page_num != resp.total_pages:
+                resp = await self.search(query, page=page_num+1)
+                
 
     @request_with_type(overseerr_type=User)
     async def user(self, id: int) -> Union[User, ErrorResponse]:
