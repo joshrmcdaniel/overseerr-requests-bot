@@ -1,0 +1,20 @@
+[Unit]
+Description=Overseerr Requests Bot
+# as root run the following
+# cd /srv
+# git clone <project> && cd request-bot
+# useradd -d /srv/request-bot/ -s /sbin/nologin -M -r overseerrbot
+# python -m venv .venv
+# .venv/bin/activate && pip install -r requirements.txt && deactivate
+# chown -R overseerrbot:overseerrbot /srv/request-bot
+# then move this over to /etc/systemd/system/
+[Service]
+ExecStart=/srv/request-bot/.venv/bin/python /srv/request-bot/main.py
+Environment="PYTHONUNBUFFERED=1" "PATH=$PATH:/srv/request-bot/.venv/bin"
+Restart=on-failure
+Type=simple
+User=overseerrbot
+PIDFile=/run/overseerrbot.pid
+
+[Install]
+WantedBy=default.target
