@@ -22,10 +22,14 @@ Current features
 - create a .env with the following:
 
 ```ini
-OVERSEERR_URL=http://your.overseerr.url
+GUILD_ID=12345667.. # discord server bot resides in
+DISCORD_TOKEN=bot-token # discord bot token
+OVERSEERR_URL=http://your.overseerr.url # url of your overseerr instance
 OVERSEERR_USER=overseerrrbot  # use your own creds. i created a service bot, admin accounts will have their requests auto approved
 OVERSEERR_PASS=overrseerrpass # use your own creds. i created a service bot, admin accounts will have their requests auto approved
 OVERSEERR_API_KEY=overseerr-api-key # replace with yours
+
+#LOG_LEVEL is another env var, but unless debugging its not needed
 ```
 
 > i use the user pass and api key for refreshing credentials; gets annoying to restart the prog every week
