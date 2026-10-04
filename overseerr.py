@@ -13,6 +13,7 @@ from typing import Dict, Any
 
 from views import SearchView, RequestsView
 from quota.api import QuotaAPI
+from quota.admin import AdminQuotaActionsView
 from quota.manager import QuotaManager, owner_id
 from quota.models import QuotaConfig
 from quota.views import StorageView, quota_summary_embed
@@ -282,7 +283,10 @@ class Overseerr(commands.Cog):
         )
         embed.add_field(name="Pending requests", value=str(pending))
         embed.set_footer(text=f"Seerr user {user_id} · Shared across their linked Discord accounts")
-        await ctx.edit(embed=embed)
+        view = AdminQuotaActionsView(
+            self.quota_manager, ctx.author.id, user_id, user.display_name, ctx.guild.id
+        )
+        await ctx.edit(embed=embed, view=view)
 
     def get_search_view(
         self, results: MediaSearchResult, search_query: str, user_id: int

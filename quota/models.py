@@ -72,6 +72,46 @@ class StorageItem:
     removable: bool
     reason: str = ""
 
+    @property
+    def retention_key(self):
+        media_id = self.tvdb_id if self.media_type == "tv" else self.tmdb_id
+        return self.server.key, self.media_type, media_id, self.season if self.season is not None else -1
+
+
+def retention_applies(keys, key):
+    return key in keys or (*key[:3], -1) in keys
+
+
+@dataclass
+class RetainedItem:
+    user_id: int
+    server_key: str
+    media_type: str
+    media_id: int
+    season: int
+    title: str
+    server_name: str
+    size: int = 0
+
+    @property
+    def retention_key(self):
+        return self.server_key, self.media_type, self.media_id, self.season
+
+    @property
+    def key(self):
+        return ":".join(str(part) for part in self.retention_key)
+
+    @classmethod
+    def from_storage(cls, user_id, item, *, whole_series=False):
+        server_key, kind, media_id, season = item.retention_key
+        if not isinstance(media_id, int) or media_id <= 0:
+            raise QuotaError("Cannot identify this title reliably. Refresh and try again.")
+        title = item.title
+        if whole_series and kind == "tv":
+            season = -1
+            title = title.removesuffix(f" — Season {item.season}")
+        return cls(user_id, server_key, kind, media_id, season, title, item.server.name, item.size)
+
 
 @dataclass
 class Snapshot:
@@ -82,6 +122,7 @@ class Snapshot:
     items: list[StorageItem]
     requests: list[dict]
     inventories: list[dict] = field(default_factory=list, repr=False)
+    retained_items: list[RetainedItem] = field(default_factory=list)
 
     @property
     def free(self):
@@ -96,7 +137,7 @@ class Approval:
 
 
 class ApprovalJournal:
-    """Keep uncertain approvals reserved across a bot/container restart."""
+    """Persist approval reservations, removals, and admin retention decisions."""
 
     def __init__(self, filename):
         self.filename = filename
@@ -114,6 +155,14 @@ class ApprovalJournal:
                 "CREATE TABLE IF NOT EXISTS removed_units "
                 "(request_id INTEGER NOT NULL, season INTEGER NOT NULL, "
                 "PRIMARY KEY (request_id, season))"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS retained_items "
+                "(user_id INTEGER NOT NULL, server_key TEXT NOT NULL, "
+                "media_type TEXT NOT NULL, media_id INTEGER NOT NULL, season INTEGER NOT NULL, "
+                "title TEXT NOT NULL, server_name TEXT NOT NULL, admin_id INTEGER NOT NULL, "
+                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "PRIMARY KEY (user_id, server_key, media_type, media_id, season))"
             )
             return connection
         except (OSError, sqlite3.Error) as error:
@@ -164,6 +213,48 @@ class ApprovalJournal:
                     "INSERT OR IGNORE INTO removed_units VALUES (?, ?)",
                     [(request_id, season if season is not None else -1)
                      for request_id in request_ids],
+                )
+        finally:
+            connection.close()
+
+    def retained_items(self):
+        connection = self._connect()
+        try:
+            return [RetainedItem(*row) for row in connection.execute(
+                "SELECT user_id, server_key, media_type, media_id, season, title, server_name "
+                "FROM retained_items ORDER BY title, season"
+            )]
+        finally:
+            connection.close()
+
+    def retain(self, item, admin_id):
+        connection = self._connect()
+        try:
+            with connection:
+                if item.season == -1:
+                    # Keeping a whole show replaces this user's individual-season exceptions.
+                    connection.execute(
+                        "DELETE FROM retained_items WHERE user_id = ? AND server_key = ? "
+                        "AND media_type = ? AND media_id = ?",
+                        (item.user_id, *item.retention_key[:3]),
+                    )
+                connection.execute(
+                    "INSERT OR IGNORE INTO retained_items "
+                    "(user_id, server_key, media_type, media_id, season, title, server_name, admin_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (item.user_id, *item.retention_key, item.title, item.server_name, admin_id),
+                )
+        finally:
+            connection.close()
+
+    def restore_retained(self, item):
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute(
+                    "DELETE FROM retained_items WHERE user_id = ? AND server_key = ? "
+                    "AND media_type = ? AND media_id = ? AND season = ?",
+                    (item.user_id, *item.retention_key),
                 )
         finally:
             connection.close()

@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -349,6 +350,168 @@ class StorageQuotaTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(QuotaError, "another season"):
             await self.manager.remove(7, item)
         self.assertFalse(any(call[1] in ("PUT", "DELETE") for call in self.api.calls))
+
+    async def test_admin_keeps_movie_without_changing_files_tags_requests_or_monitoring(self):
+        self.api.records[99] = request(99, status=5, tmdb_id=1001)
+        before = copy.deepcopy((self.api.movies, self.api.records))
+        item = (await self.manager.snapshot(7)).items[0]
+        await self.manager.retain(7, item, 100)
+        restarted = QuotaManager(self.api, self.config)
+        snapshot = await restarted.snapshot(7)
+        self.assertEqual((snapshot.used, snapshot.reserved), (0, 0))
+        self.assertEqual(snapshot.items, [])
+        self.assertEqual(len(snapshot.retained_items), 1)
+        self.assertEqual(snapshot.retained_items[0].size, 480 * GB)
+        self.assertEqual((self.api.movies, self.api.records), before)
+        with self.assertRaises(QuotaError):
+            await restarted.remove(7, item)
+        self.assertTrue(all(call[1] == "GET" for call in self.api.calls))
+        self.assertEqual(self.api.approvals, [])
+
+    async def test_retained_movie_stays_exempt_after_file_upgrade_and_tag_rename(self):
+        item = (await self.manager.snapshot(7)).items[0]
+        await self.manager.retain(7, item, 100)
+        self.api.tags[0]["label"] = "7-new-name"
+        self.api.movies[0]["id"] = 123
+        self.api.movies[0]["sizeOnDisk"] = 600 * GB
+        self.assertEqual((await self.manager.snapshot(7)).used, 0)
+        self.assertTrue((await self.manager.auto_approve(7, 1)).approved)
+
+    async def test_retention_does_not_follow_reused_arr_id_to_a_different_movie(self):
+        item = (await self.manager.snapshot(7)).items[0]
+        await self.manager.retain(7, item, 100)
+        self.api.movies[0]["tmdbId"] = 999
+        self.assertEqual((await self.manager.snapshot(7)).used, 480 * GB)
+
+    async def test_retention_only_applies_on_the_selected_server(self):
+        item = (await self.manager.snapshot(7)).items[0]
+        await self.manager.retain(7, item, 100)
+        self.api.server_list[0] = replace(self.api.server_list[0], id=1)
+        snapshot = await self.manager.snapshot(7)
+        self.assertEqual(snapshot.used, 480 * GB)
+        self.assertTrue(snapshot.items[0].removable)
+
+    async def test_existing_quota_database_gains_retention_without_losing_state(self):
+        connection = sqlite3.connect(self.config.state_file)
+        try:
+            with connection:
+                connection.execute(
+                    "CREATE TABLE approvals (request_id INTEGER PRIMARY KEY, user_id INTEGER, bytes INTEGER)"
+                )
+                connection.execute("INSERT INTO approvals VALUES (1, 7, ?)", (20 * GB,))
+                connection.execute(
+                    "CREATE TABLE removed_units (request_id INTEGER, season INTEGER, PRIMARY KEY (request_id, season))"
+                )
+                connection.execute("INSERT INTO removed_units VALUES (99, 1)")
+        finally:
+            connection.close()
+        item = (await self.manager.snapshot(7)).items[0]
+        await self.manager.retain(7, item, 100)
+        self.assertEqual(self.manager.journal.pending(7), {1: 20 * GB})
+        self.assertEqual(self.manager.journal.removed_units(), {(99, 1)})
+        self.assertEqual(len(self.manager.journal.retained_items()), 1)
+
+    async def test_admin_revalidates_identity_and_owner_before_retaining(self):
+        item = (await self.manager.snapshot(7)).items[0]
+        self.api.movies[0]["tmdbId"] = 999
+        with self.assertRaisesRegex(QuotaError, "changed"):
+            await self.manager.retain(7, item, 100)
+        self.api.movies[0]["tmdbId"] = item.tmdb_id
+        self.api.movies[0]["tags"] = [80]
+        with self.assertRaises(QuotaError):
+            await self.manager.retain(7, item, 100)
+        self.assertEqual(self.manager.journal.retained_items(), [])
+
+    async def test_shared_movie_only_releases_target_quota_and_is_protected_from_other_user(self):
+        self.api.movies[0]["tags"] = [70, 80]
+        item = (await self.manager.snapshot(7)).items[0]
+        await self.manager.retain(7, item, 100)
+        self.assertEqual((await self.manager.snapshot(7)).used, 0)
+        # Even if the retained user's original attribution disappears, the files stay protected.
+        self.api.movies[0]["tags"] = [80]
+        snapshot = await self.manager.snapshot(8)
+        self.assertEqual(snapshot.used, 480 * GB)
+        self.assertFalse(snapshot.items[0].removable)
+        with self.assertRaisesRegex(QuotaError, "administrator"):
+            await self.manager.remove(8, snapshot.items[0])
+        self.assertTrue(all(call[1] == "GET" for call in self.api.calls))
+
+    async def test_retained_season_releases_missing_episodes_but_not_other_seasons(self):
+        self.api.add_shared_series()
+        self.api.records[10]["seasons"].append({"seasonNumber": 2})
+        self.api.records[10]["status"] = 2
+        self.api.episodes.extend([
+            {"id": 203, "seasonNumber": 1, "hasFile": False},
+            {"id": 204, "seasonNumber": 2, "hasFile": False},
+        ])
+        before = copy.deepcopy((self.api.files, self.api.series, self.api.episodes))
+        item = next(i for i in (await self.manager.snapshot(7)).items if i.season == 1)
+        await self.manager.retain(7, item, 100)
+        snapshot = await self.manager.snapshot(7)
+        self.assertEqual(snapshot.used, 520 * GB)
+        self.assertEqual(snapshot.reserved, 2 * GB)
+        self.assertEqual((self.api.files, self.api.series, self.api.episodes), before)
+
+    async def test_keeping_whole_show_exempts_future_seasons_and_replaces_season_exceptions(self):
+        self.api.add_shared_series()
+        self.api.records[10]["seasons"].append({"seasonNumber": 2})
+        item = next(i for i in (await self.manager.snapshot(7)).items if i.season == 1)
+        await self.manager.retain(7, item, 100)
+        item = next(i for i in (await self.manager.snapshot(7)).items if i.season == 2)
+        await self.manager.retain(7, item, 100, whole_series=True)
+        self.api.files.append({"id": 103, "seasonNumber": 3, "size": 90 * GB})
+        self.api.episodes.append({"id": 205, "seasonNumber": 3, "hasFile": False})
+        self.api.records[30] = request(30, kind="tv", status=2, seasons=[3], tmdb_id=500)
+        snapshot = await self.manager.snapshot(7)
+        self.assertEqual((snapshot.used, snapshot.reserved), (480 * GB, 0))
+        self.assertEqual(len(snapshot.retained_items), 1)
+        self.assertEqual(snapshot.retained_items[0].season, -1)
+        other = await self.manager.snapshot(8)
+        self.assertEqual(other.used, 40 * GB)
+        self.assertFalse(other.items[0].removable)
+        self.assertTrue(all(call[1] == "GET" for call in self.api.calls))
+
+    async def test_restoring_quota_charges_actual_size_again_without_touching_files(self):
+        item = (await self.manager.snapshot(7)).items[0]
+        kept = await self.manager.retain(7, item, 100)
+        self.api.movies[0]["sizeOnDisk"] = 510 * GB
+        await self.manager.restore_retained(7, kept, 100)
+        snapshot = await self.manager.snapshot(7)
+        self.assertEqual(snapshot.used, 510 * GB)
+        self.assertTrue(snapshot.items[0].removable)
+        self.assertEqual(snapshot.retained_items, [])
+        self.assertFalse((await self.manager.auto_approve(7, 1)).approved)
+        self.assertTrue(all(call[1] == "GET" for call in self.api.calls))
+
+    async def test_restoring_one_user_keeps_another_users_retention_protection(self):
+        self.api.movies[0]["tags"] = [70, 80]
+        item = (await self.manager.snapshot(7)).items[0]
+        kept = await self.manager.retain(7, item, 100)
+        other = (await self.manager.snapshot(8)).items[0]
+        await self.manager.retain(8, other, 100)
+        with self.assertRaises(QuotaError):
+            await self.manager.restore_retained(8, kept, 100)
+        await self.manager.restore_retained(7, kept, 100)
+        self.assertFalse((await self.manager.snapshot(7)).items[0].removable)
+        self.assertEqual((await self.manager.snapshot(8)).used, 0)
+
+    async def test_pending_request_for_retained_show_reserves_no_new_space(self):
+        self.api.add_shared_series()
+        item = next(i for i in (await self.manager.snapshot(7)).items if i.season == 1)
+        await self.manager.retain(7, item, 100, whole_series=True)
+        self.api.records[30] = request(30, kind="tv", seasons=[3], tmdb_id=500)
+        self.assertTrue((await self.manager.auto_approve(7, 30)).approved)
+        self.assertEqual((await self.manager.snapshot(7)).reserved, 0)
+
+    async def test_retention_releases_uncertain_reservation_without_allowing_duplicate_approval(self):
+        self.api.add_shared_series()
+        self.api.records[30] = request(30, kind="tv", seasons=[1], tmdb_id=500)
+        self.manager.journal.reserve(30, 7, 20 * GB)
+        item = next(i for i in (await self.manager.snapshot(7)).items if i.season == 1)
+        await self.manager.retain(7, item, 100)
+        self.assertEqual((await self.manager.snapshot(7)).reserved, 0)
+        self.assertFalse((await self.manager.auto_approve(7, 30)).approved)
+        self.assertEqual(self.api.approvals, [])
 
 
 class QuotaAPITests(unittest.IsolatedAsyncioTestCase):

@@ -11,12 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 def quota_summary_embed(snapshot, *, title="Your storage allowance"):
-    return discord.Embed(
+    embed = discord.Embed(
         title=title[:256], color=discord.Color.blurple(),
         description=f"**Downloaded:** {format_size(snapshot.used)}\n"
         f"**Reserved for downloads:** {format_size(snapshot.reserved)}\n"
         f"**Remaining:** {format_size(snapshot.free)} of {format_size(snapshot.limit)}",
     )
+    if snapshot.retained_items:
+        size = sum(item.size for item in snapshot.retained_items)
+        embed.description += f"\n**Kept outside quota:** {format_size(size)}"
+    return embed
 
 
 class UserView(discord.ui.View):
@@ -111,7 +115,7 @@ class StorageView(UserView):
         for item in items:
             detail = format_size(item.size)
             if not item.removable:
-                detail += " · Shared; contact the bot owner to remove it."
+                detail += " · " + (item.reason or "Contact the bot owner to remove it.")
             self.embed.add_field(name=item.title[:256], value=detail, inline=False)
         if not items:
             self.embed.add_field(name="Downloads", value="No downloaded requests are using your allowance.")

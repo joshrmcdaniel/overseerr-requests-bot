@@ -4,7 +4,9 @@ import re
 from collections import defaultdict
 
 from .api import APIError, QuotaError
-from .models import Approval, ApprovalJournal, Snapshot, StorageItem, format_size
+from .models import (
+    Approval, ApprovalJournal, RetainedItem, Snapshot, StorageItem, format_size, retention_applies,
+)
 
 logger = logging.getLogger(__name__)
 USER_TAG = re.compile(r"^([1-9][0-9]*)\s*-\s*.*$")
@@ -79,7 +81,7 @@ class QuotaManager:
         async with self._reads:
             return await self.api.arr(server, "GET", endpoint, params=params)
 
-    async def _inventory(self, server, requests, user_id, removed):
+    async def _inventory(self, server, requests, user_id, removed, protected):
         tags, catalog = await asyncio.gather(
             self._arr_read(server, "/tag"),
             self._arr_read(server, "/movie" if server.kind == "radarr" else "/series"),
@@ -167,10 +169,14 @@ class QuotaManager:
                     removable=owners == {user_id},
                     reason="This season is also attributed to another user.",
                 ))
+        for entry in entries:
+            if retention_applies(protected, entry.retention_key):
+                entry.removable = False
+                entry.reason = "An administrator is keeping this download in the library."
         inventory["entries"] = entries
         return inventory
 
-    async def _remaining(self, request, inventories, removed):
+    async def _remaining(self, request, inventories, removed, retained=frozenset()):
         matches = [i for i in inventories if server_matches(request, i["server"])]
         if len(matches) != 1:
             raise QuotaError("Cannot identify the media server for this request.")
@@ -180,7 +186,12 @@ class QuotaManager:
             raise QuotaError("The request matches more than one library item.")
         item = items[0] if items else None
         prefix = (inventory["server"].key, media_type(request), request["media"]["tmdbId"])
+        id_field = "tvdbId" if media_type(request) == "tv" else "tmdbId"
+        media_id = (item or {}).get(id_field) or request["media"].get(id_field)
+        retention_prefix = (inventory["server"].key, media_type(request), media_id)
         if media_type(request) == "movie":
+            if retention_applies(retained, (*retention_prefix, -1)):
+                return {}
             if (request["id"], -1) in removed or (item and item.get("hasFile")):
                 return {}
             estimate = self.config.movie_4k_estimate if request.get("is4k") else self.config.movie_estimate
@@ -189,6 +200,12 @@ class QuotaManager:
         requested = {s["seasonNumber"] for s in request.get("seasons", [])}
         if not requested:
             raise QuotaError("Seerr did not report the requested seasons.")
+        requested = {
+            number for number in requested
+            if not retention_applies(retained, (*retention_prefix, number))
+        }
+        if not requested:
+            return {}
         episodes = inventory["episodes"].get(item["id"], []) if item else []
         counts = {}
         if any(not any(e["seasonNumber"] == number for e in episodes) for number in requested):
@@ -231,15 +248,25 @@ class QuotaManager:
                     request_map[request_id] = request
         requests = list(request_map.values())
         removed = self.journal.removed_units()
+        retained_items = self.journal.retained_items()
+        protected = {item.retention_key for item in retained_items}
+        user_retained = [item for item in retained_items if item.user_id == user_id]
+        retained = {item.retention_key for item in user_retained}
         inventories = await asyncio.gather(*[
-            self._inventory(server, requests, user_id, removed) for server in servers
+            self._inventory(server, requests, user_id, removed, protected) for server in servers
         ])
-        items = [item for inv in inventories for item in inv["entries"] if item.size > 0]
+        all_items = [item for inv in inventories for item in inv["entries"] if item.size > 0]
+        items = [item for item in all_items if not retention_applies(retained, item.retention_key)]
+        for kept in user_retained:
+            kept.size = sum(
+                item.size for item in all_items
+                if retention_applies({kept.retention_key}, item.retention_key)
+            )
         reservations = {}
         if self.config.reserve_downloads:
             for request in requests:
                 if owner_id(request) == user_id and request["status"] in (2, 4):
-                    for key, size in (await self._remaining(request, inventories, removed)).items():
+                    for key, size in (await self._remaining(request, inventories, removed, retained)).items():
                         reservations[key] = max(size, reservations.get(key, 0))
 
         uncertain = 0
@@ -249,6 +276,10 @@ class QuotaManager:
                 if request_id in listed_request_ids:
                     self.journal.clear(request_id)
             else:
+                if request is not None and retained and self.config.reserve_downloads:
+                    # Keep the uncertain approval marker, but stop reserving exempt titles.
+                    remaining = await self._remaining(request, inventories, set(), retained)
+                    size = min(size, sum(remaining.values()))
                 uncertain += size
         return Snapshot(
             user_id=user_id, limit=self.config.limit,
@@ -256,6 +287,7 @@ class QuotaManager:
             reserved=sum(reservations.values()) + uncertain,
             items=sorted(items, key=lambda item: (-item.size, item.title)),
             requests=requests, inventories=list(inventories),
+            retained_items=user_retained,
         )
 
     async def auto_approve(self, user_id, request_id):
@@ -280,7 +312,8 @@ class QuotaManager:
                 size = 0
                 if self.config.reserve_downloads:
                     size = sum((await self._remaining(
-                        request, snapshot.inventories, set()
+                        request, snapshot.inventories, set(),
+                        {item.retention_key for item in snapshot.retained_items},
                     )).values())
                 if snapshot.used + snapshot.reserved >= self.config.limit or size > snapshot.free:
                     return Approval(False,
@@ -313,6 +346,29 @@ class QuotaManager:
                 return Approval(False, "Your request was submitted, but auto-approval could not be "
                                 "confirmed. It has not been resubmitted. Try Manage storage later "
                                 "or ask the bot owner to check Seerr.")
+
+    async def retain(self, user_id, expected, admin_id, *, whole_series=False):
+        """Release quota and protect files without changing Seerr or Arr ownership."""
+        async with self._lock:
+            snapshot = await self.snapshot(user_id)
+            item = next((i for i in snapshot.items if i.key == expected.key), None)
+            if item is None or user_id not in item.owners:
+                raise QuotaError("That download no longer counts against this user. Refresh the list.")
+            if item.retention_key != expected.retention_key:
+                raise QuotaError("The library item changed. Refresh before keeping it.")
+            kept = RetainedItem.from_storage(user_id, item, whole_series=whole_series)
+            self.journal.retain(kept, admin_id)
+            logger.info("Admin %s kept %s and released quota for Seerr user %s", admin_id, kept.key, user_id)
+            return kept
+
+    async def restore_retained(self, user_id, expected, admin_id):
+        async with self._lock:
+            item = next((i for i in self.journal.retained_items()
+                         if i.user_id == user_id and i.key == expected.key), None)
+            if item is None or expected.user_id != user_id:
+                raise QuotaError("This quota exception no longer exists. Refresh the list.")
+            self.journal.restore_retained(item)
+            logger.info("Admin %s restored quota for %s to Seerr user %s", admin_id, item.key, user_id)
 
     async def _check_queue(self, item):
         page = 1
