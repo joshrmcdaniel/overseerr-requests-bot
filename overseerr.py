@@ -13,9 +13,9 @@ from typing import Dict, Any
 
 from views import SearchView, RequestsView
 from quota.api import QuotaAPI
-from quota.manager import QuotaManager
+from quota.manager import QuotaManager, owner_id
 from quota.models import QuotaConfig
-from quota.views import StorageView
+from quota.views import StorageView, quota_summary_embed
 
 log = logging.getLogger(__name__)
 
@@ -238,6 +238,51 @@ class Overseerr(commands.Cog):
             await ctx.edit(content="Could not read storage usage. Try again later or contact the bot owner.")
             return
         await ctx.edit(embed=view.embed, view=view)
+
+    @slash_command(
+        name="quota-user", description="View another member's storage allowance (admins only).",
+        guild_ids=[int(os.environ.get("GUILD_ID"))],
+        default_member_permissions=discord.Permissions(administrator=True),
+    )
+    async def _quota_user(
+        self,
+        ctx: ApplicationContext,
+        user: Option(discord.Member, "Member whose storage allowance to view.", required=True),
+    ):
+        # Discord command permissions can be overridden in server settings.
+        # Enforce the administrator requirement before reading another user's data.
+        if ctx.guild is None or not ctx.author.guild_permissions.administrator:
+            await ctx.respond(
+                "You need the Administrator permission to view another member's quota.",
+                ephemeral=True,
+            )
+            return
+        if not self.quota_manager.enabled:
+            await ctx.respond("Storage quotas are disabled.", ephemeral=True)
+            return
+        user_id = self._discord_id_map.get(user.id)
+        if user_id is None:
+            await ctx.respond("That member is not linked to a Seerr account.", ephemeral=True)
+            return
+        await ctx.defer(ephemeral=True)
+        try:
+            snapshot = await self.quota_manager.snapshot(user_id)
+        except Exception:
+            log.exception(
+                "Could not load quota for Seerr user %s requested by admin %s",
+                user_id, ctx.author.id,
+            )
+            await ctx.edit(content="Could not read storage usage. Try again later.")
+            return
+        embed = quota_summary_embed(snapshot, title=f"Storage allowance for {user.display_name}")
+        embed.add_field(name="Downloaded movies / seasons", value=str(len(snapshot.items)))
+        pending = sum(
+            owner_id(request) == user_id and request["status"] == 1
+            for request in snapshot.requests
+        )
+        embed.add_field(name="Pending requests", value=str(pending))
+        embed.set_footer(text=f"Seerr user {user_id} · Shared across their linked Discord accounts")
+        await ctx.edit(embed=embed)
 
     def get_search_view(
         self, results: MediaSearchResult, search_query: str, user_id: int

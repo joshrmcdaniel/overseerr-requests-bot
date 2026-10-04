@@ -10,6 +10,15 @@ from .models import format_size
 logger = logging.getLogger(__name__)
 
 
+def quota_summary_embed(snapshot, *, title="Your storage allowance"):
+    return discord.Embed(
+        title=title[:256], color=discord.Color.blurple(),
+        description=f"**Downloaded:** {format_size(snapshot.used)}\n"
+        f"**Reserved for downloads:** {format_size(snapshot.reserved)}\n"
+        f"**Remaining:** {format_size(snapshot.free)} of {format_size(snapshot.limit)}",
+    )
+
+
 class UserView(discord.ui.View):
     def __init__(self, manager, discord_user_id, seerr_user_id, request_id=None):
         super().__init__(timeout=300, disable_on_timeout=True)
@@ -97,12 +106,7 @@ class StorageView(UserView):
         snapshot = self.snapshot
         last_page = max(0, (len(snapshot.items) - 1) // self.PAGE_SIZE)
         self.page = min(self.page, last_page)
-        self.embed = discord.Embed(
-            title="Your storage allowance", color=discord.Color.blurple(),
-            description=f"**Downloaded:** {format_size(snapshot.used)}\n"
-            f"**Reserved for downloads:** {format_size(snapshot.reserved)}\n"
-            f"**Remaining:** {format_size(snapshot.free)} of {format_size(snapshot.limit)}",
-        )
+        self.embed = quota_summary_embed(snapshot)
         items = snapshot.items[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
         for item in items:
             detail = format_size(item.size)
