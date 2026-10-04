@@ -7,7 +7,7 @@ class MediaInfo(jsonobject.JsonObject):
     id = jsonobject.IntegerProperty(name="id")
     tmdb_id = jsonobject.IntegerProperty(name="tmdbId")
     tvdb_id = jsonobject.IntegerProperty(name="tvdbId")
-    status = jsonobject.IntegerProperty(choices=[1, 2, 3, 4, 5], name="status")
+    status = jsonobject.IntegerProperty(choices=[1, 2, 3, 4, 5, 6, 7], name="status")
     requests = jsonobject.DefaultProperty(name="requests")
     created_at = jsonobject.StringProperty(name="createdAt")
     updated_at = jsonobject.StringProperty(name="updatedAt")

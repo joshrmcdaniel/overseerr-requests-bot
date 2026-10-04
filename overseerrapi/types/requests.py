@@ -46,7 +46,7 @@ class RequestBody(jsonobject.JsonObject):
 class Request(jsonobject.JsonObject):
     id = jsonobject.IntegerProperty(name="id", required=True)
     status = jsonobject.IntegerProperty(
-        choices=[1, 2, 3, 4], name="status", required=True
+        choices=[1, 2, 3, 4, 5], name="status", required=True
     )
     media = jsonobject.ObjectProperty(lambda: MediaInfo, name="media")
     created_at = jsonobject.DateTimeProperty(name="createdAt", required=True)
