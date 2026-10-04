@@ -223,6 +223,21 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.children, [])
         self.assertTrue(view.is_finished())
 
+    async def test_removed_media_and_missing_tv_seasons_can_be_requested_again(self):
+        for kind, status, enabled in (
+            ("movie", 7, True), ("tv", 7, True), ("tv", 4, True),
+            ("movie", 4, False), ("movie", 5, False), ("tv", 6, False),
+        ):
+            with self.subTest(kind=kind, status=status):
+                payload = search_payload(total=1)
+                payload["results"] = [{
+                    "id": 1, "mediaType": kind, "title": "Film", "name": "Show",
+                    "mediaInfo": {"status": status},
+                }]
+                view = self.search_view(payload=payload)
+                await view._edit_embed()
+                self.assertEqual(view.request.disabled, not enabled)
+
     async def test_empty_request_queue_and_offset_beyond_end_render_no_requests(self):
         for total, skip in [(0, 0), (5, 20)]:
             with self.subTest(total=total, skip=skip):

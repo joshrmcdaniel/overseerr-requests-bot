@@ -15,16 +15,22 @@ FROM python:3.13-slim-bookworm AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    QUOTA_STATE_FILE=/data/quota.sqlite3
 
 RUN groupadd --gid 10001 bot \
-    && useradd --uid 10001 --gid bot --no-create-home --shell /usr/sbin/nologin bot
+    && useradd --uid 10001 --gid bot --no-create-home --shell /usr/sbin/nologin bot \
+    && mkdir /data \
+    && chown bot:bot /data
 
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY main.py overseerr.py shared.py views.py ./
 COPY overseerrapi/ ./overseerrapi/
+COPY quota/ ./quota/
+
+VOLUME ["/data"]
 
 USER bot
 

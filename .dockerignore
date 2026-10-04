@@ -14,3 +14,5 @@ env
 .coverage
 htmlcov
 tests
+.data
+*.sqlite3*

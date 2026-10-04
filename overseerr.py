@@ -12,6 +12,10 @@ from overseerrapi.types import Requests, MediaSearchResult
 from typing import Dict, Any
 
 from views import SearchView, RequestsView
+from quota.api import QuotaAPI
+from quota.manager import QuotaManager
+from quota.models import QuotaConfig
+from quota.views import StorageView
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +29,10 @@ class Overseerr(commands.Cog):
             email=os.environ.get("OVERSEERR_USER"),
             password=os.environ.get("OVERSEERR_PASS"),
             api_key=os.environ.get("OVERSEERR_API_KEY"),
+        )
+        quota_config = QuotaConfig.from_env()
+        self.quota_manager = QuotaManager(
+            QuotaAPI(self.overseerr_client, quota_config.server_urls), quota_config
         )
 
     @commands.Cog.listener()
@@ -208,6 +216,29 @@ class Overseerr(commands.Cog):
             params=params,
         )
 
+    @slash_command(
+        name="quota", description="View your storage allowance and remove downloads.",
+        guild_ids=[int(os.environ.get("GUILD_ID"))],
+    )
+    async def _quota(self, ctx: ApplicationContext):
+        user_id = self._discord_id_map.get(ctx.user.id)
+        if user_id is None:
+            await ctx.respond("Link your Discord ID in Seerr to view your storage.", ephemeral=True)
+            return
+        if not self.quota_manager.enabled:
+            await ctx.respond("Storage quotas are disabled.", ephemeral=True)
+            return
+        await ctx.defer(ephemeral=True)
+        view = StorageView(self.quota_manager, ctx.user.id, user_id)
+        try:
+            await view.load()
+        except Exception:
+            log.exception("Could not load quota for Seerr user %s", user_id)
+            view.stop()
+            await ctx.edit(content="Could not read storage usage. Try again later or contact the bot owner.")
+            return
+        await ctx.edit(embed=view.embed, view=view)
+
     def get_search_view(
         self, results: MediaSearchResult, search_query: str, user_id: int
     ) -> SearchView:
@@ -218,6 +249,7 @@ class Overseerr(commands.Cog):
             search_query=search_query,
             discord_id_map=self._discord_id_map,
             genre_id_map=self._genre_id_map,
+            quota_manager=self.quota_manager,
         )
 
 

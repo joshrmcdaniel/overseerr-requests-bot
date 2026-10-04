@@ -19,6 +19,7 @@ from overseerrapi.types import (
 )
 
 import logging
+from quota.views import QuotaActionsView
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class SearchView(OverseerrView):
         genre_id_map: GenreIDMap,
         discord_id_map: Dict[int, int],
         *items: Item,
+        quota_manager=None,
         timeout: float | None = 180,
         disable_on_timeout: bool = False,
     ) -> Self:
@@ -206,6 +208,7 @@ class SearchView(OverseerrView):
         self._index: int = 0
         self._query: str = search_query
         self._results: MediaSearchResult = results
+        self.quota_manager = quota_manager
 
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
     async def previous(
@@ -312,6 +315,17 @@ class SearchView(OverseerrView):
             return
         self.clear_items()
         self.stop()
+        if self.quota_manager is not None and self.quota_manager.enabled:
+            approval = await self.quota_manager.auto_approve(user_id, response.id)
+            view = QuotaActionsView(
+                self.quota_manager, interaction.user.id, user_id,
+                None if approval.approved else response.id,
+            )
+            view.retry.disabled = approval.approved
+            await interaction.edit_original_response(
+                content=f"Request for {title} submitted. {approval.message}", view=view
+            )
+            return
         await interaction.edit_original_response(
             content=f"Request for {title} sent! 🎉", view=self
         )
@@ -354,11 +368,16 @@ class SearchView(OverseerrView):
             1: "Request",
             2: "Pending",
             3: "Processing",
-            4: "Partiallly Available",
+            4: "Partially Available",
             5: "Available",
+            6: "Blocked",
+            7: "Request",
         }
-        self.children[2].disabled = status != 1
+        missing_seasons = self.result.media_type == "tv" and status == 4
+        self.children[2].disabled = status not in (1, 7) and not missing_seasons
         self.children[2].label = status_map.get(status, "Request")
+        if missing_seasons:
+            self.children[2].label = "Request missing seasons"
 
     async def _edit_embed(self) -> None:
         if not self._results.results:
