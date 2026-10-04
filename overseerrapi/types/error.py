@@ -11,7 +11,7 @@ class ErrorResponse(jsonobject.JsonObject):
     errors = jsonobject.ListProperty(lambda: OverseerrError, name="errors")
 
 
-class RequestAssignmentError(ErrorResponse):
+class RequestAttributionError(ErrorResponse):
     """Creation succeeded, so retrying must not create another request."""
 
     request_id = jsonobject.IntegerProperty(name="requestId")

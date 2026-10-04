@@ -27,8 +27,6 @@ class Overseerr(commands.Cog):
         self._discord_id_map: Dict[int, int] = {}
         self.overseerr_client = OverseerrAPI(
             url=os.environ.get("OVERSEERR_URL"),
-            email=os.environ.get("OVERSEERR_USER"),
-            password=os.environ.get("OVERSEERR_PASS"),
             api_key=os.environ.get("OVERSEERR_API_KEY"),
         )
         quota_config = QuotaConfig.from_env()
@@ -39,27 +37,14 @@ class Overseerr(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         log.info("Overseerr cog loading...")
-        for job in (self.refresh_cookie, self.map_discord_ids, self.map_genre_ids):
+        for job in (self.map_discord_ids, self.map_genre_ids):
             if not job.is_running():
                 job.start()
         log.info("Overseerr cog ready.")
 
     def cog_unload(self):
-        self.refresh_cookie.cancel()
         self.map_discord_ids.cancel()
         self.map_genre_ids.cancel()
-
-    @tasks.loop(hours=24)
-    async def refresh_cookie(self):
-        try:
-            refreshed = await self.overseerr_client.refresh_session()
-        except Exception:
-            log.exception("Seerr cookie refresh failed; retrying in five minutes")
-            self.refresh_cookie.change_interval(minutes=5)
-        else:
-            self.refresh_cookie.change_interval(hours=24)
-            if refreshed:
-                log.info("Refreshed Seerr service account cookie")
 
     @tasks.loop(hours=1)
     async def map_discord_ids(self):

@@ -2,7 +2,6 @@ import asyncio
 import io
 import json
 import unittest
-from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -16,7 +15,7 @@ from overseerrapi.types import (
     MovieResult,
     PersonResult,
     Requests,
-    RequestAssignmentError,
+    RequestAttributionError,
     TvResult,
 )
 from views import RequestsView, SearchView
@@ -121,7 +120,7 @@ class AuthenticationRegressionTests(unittest.TestCase):
             results = asyncio.run(client.search("movie"))
             self.assertIsInstance(results.results[0], MovieResult)
             self.assertEqual(get.call_args.kwargs["headers"]["X-Api-Key"], "test-key")
-            self.assertEqual(get.call_args.kwargs["cookies"], {})
+            self.assertNotIn("cookies", get.call_args.kwargs)
 
             post.return_value = requests_payload(total=1)["results"][0]
             asyncio.run(client.post_request(media_id=1, media_type="movie"))
@@ -129,31 +128,15 @@ class AuthenticationRegressionTests(unittest.TestCase):
             asyncio.run(client.approve_request(1))
             self.assertEqual(post.call_args.kwargs["headers"]["X-Api-Key"], "test-key")
 
-    def test_user_credentials_keep_session_permissions_for_requests(self):
-        login_response = SimpleNamespace(
-            raise_for_status=Mock(), cookies={"connect.sid": "test-session"}
-        )
-        with (
-            patch("overseerrapi.api.client.post", new_callable=AsyncMock) as post,
-            redirect_stdout(io.StringIO()),
-        ):
-            post.return_value = login_response
-            client = OverseerrAPI(
-                "https://example.invalid/api/v1",
-                email="bot@example.invalid",
-                password="test-password",
-                api_key="test-key",
-                log_file=io.StringIO(),
-            )
-            self.assertNotIn("X-Api-Key", post.call_args.kwargs["headers"])
-            post.return_value = requests_payload(total=1)["results"][0]
-            asyncio.run(client.post_request(media_id=1, media_type="movie"))
-            self.assertNotIn("X-Api-Key", post.call_args.kwargs["headers"])
-            self.assertEqual(
-                post.call_args.kwargs["cookies"], {"connect.sid": "test-session"}
-            )
-            asyncio.run(client.approve_request(1))
-            self.assertEqual(post.call_args.kwargs["headers"]["X-Api-Key"], "test-key")
+    def test_missing_api_key_fails_before_any_network_request(self):
+        for key in (None, "", " "):
+            with (
+                self.subTest(key=key),
+                patch("overseerrapi.api.client.post", new_callable=AsyncMock) as post,
+                self.assertRaisesRegex(ValueError, "OVERSEERR_API_KEY"),
+            ):
+                OverseerrAPI("https://example.invalid/api/v1", api_key=key)
+            post.assert_not_awaited()
 
 
 class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -340,17 +323,18 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.result_number, 21)
         self.assertEqual(self.client.get_all_requests.call_args.kwargs["skip"], 20)
 
-    async def test_assignment_failure_shows_created_id_and_prevents_resubmission(self):
+    async def test_attribution_failure_prevents_resubmission_and_quota_approval(self):
         view = self.search_view(total=1)
+        view.quota_manager = SimpleNamespace(enabled=True, auto_approve=AsyncMock())
         await view._edit_embed()
-        self.client.post_request.return_value = RequestAssignmentError(
-            request_id=42, message="Movie Quota exceeded."
+        self.client.post_request.return_value = RequestAttributionError(
+            request_id=42, message="Seerr did not return the expected requester."
         )
         first_click = interaction()
         await view.request.callback(first_click)
         content = first_click.edit_original_response.call_args.kwargs["content"]
         self.assertIn("was created (#42)", content)
-        self.assertIn("Movie Quota exceeded.", content)
+        self.assertIn("expected requester", content)
         self.assertNotIn("sent!", content)
         self.assertTrue(view.is_finished())
         self.assertEqual(view.children, [])
@@ -359,6 +343,7 @@ class ViewRegressionTests(unittest.IsolatedAsyncioTestCase):
         await view.request.callback(repeated_click)
         repeated_click.response.defer.assert_awaited_once()
         self.client.post_request.assert_awaited_once()
+        view.quota_manager.auto_approve.assert_not_awaited()
 
     async def test_request_in_progress_ignores_a_second_click(self):
         view = self.search_view(total=1)

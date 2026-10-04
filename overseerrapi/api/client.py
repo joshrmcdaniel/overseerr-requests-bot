@@ -1,7 +1,6 @@
 import logging
 import sys
 import asyncio
-from aiohttp import ClientResponse
 from functools import partial, partialmethod
 from typing import (
     Dict,
@@ -12,7 +11,7 @@ from typing import (
     Literal,
     List,
 )
-from ..shared.networking import get, post, put
+from ..shared.networking import get, post
 from ..types import *
 from ..shared.wrappers import _request_with_type as request_with_type
 
@@ -25,19 +24,16 @@ class OverseerrAPI:
         self,
         url: str,
         *,
-        api_key: Optional[str] = None,
-        email: Optional[str] = None,
-        password: Optional[str] = None,
+        api_key: str,
         log_level: str = "INFO",
         log_file: str | TextIO = sys.stderr,
     ) -> Self:
+        if not api_key or not api_key.strip():
+            raise ValueError("Configure OVERSEERR_API_KEY to connect to Seerr.")
         setup_logging()
         self._url = url
         self._api_key = api_key
         self._me = None
-        self._password: str = password
-        self._email: str = email
-        self.__cookies = {}
 
         self._logger = logging.getLogger(__name__)
         ch = logging.StreamHandler(log_file)
@@ -48,44 +44,6 @@ class OverseerrAPI:
         ch.setLevel(log_level.upper())
         self._logger.addHandler(ch)
         self._logger.debug("Initialized OverseerrAPI")
-
-        if email and password:
-            asyncio.run(self._login(email, password))
-
-    async def _login(
-        self, email: Optional[str] = None, password: Optional[str] = None
-    ) -> None:
-        self._logger.debug("Logging in with email and password")
-        if email is None:
-            email = self._email
-        if email is None:
-            raise RuntimeError("No email specified.")
-        if password is None:
-            if self._password is None:
-                raise RuntimeError("No password specified for authentication.")
-            password = self._password
-
-        login: ClientResponse = await post(
-            self._url + "/auth/local",
-            body={"email": email, "password": password},
-            headers={"Content-Type": "application/json"},
-            raw=True,
-        )
-        login.raise_for_status()
-        session_cookie = login.cookies.get("connect.sid")
-        if not getattr(session_cookie, "value", session_cookie):
-            raise RuntimeError("Seerr login did not return a session cookie.")
-        # Keep the current cookie until a replacement login has fully succeeded.
-        self.__cookies = login.cookies
-        self._me = None
-        self._logger.debug("Successfully logged in")
-
-    async def refresh_session(self) -> bool:
-        """Refresh the service account cookie, or skip API-key-only clients."""
-        if not (self._email and self._password):
-            return False
-        await self._login()
-        return True
 
     @request_with_type(overseerr_type=MediaSearchResult)
     async def search(
@@ -106,7 +64,6 @@ class OverseerrAPI:
             self._url + "/search",
             params=params,
             headers=self._headers,
-            cookies=self._cookies,
         )
     
     async def search_res_iterator(
@@ -134,7 +91,7 @@ class OverseerrAPI:
         :rtype: Union[User, ErrorResponse]
         """
         return await get(
-            self._url + f"/user/{id}", headers=self._headers, cookies=self._cookies
+            self._url + f"/user/{id}", headers=self._headers
         )
 
     @request_with_type(overseerr_type=UserSearchResult)
@@ -146,7 +103,7 @@ class OverseerrAPI:
         :rtype: Union[UserSearchResult, ErrorResponse]
         """
         return await get(
-            self._url + "/user", headers=self._headers, cookies=self._cookies
+            self._url + "/user", headers=self._headers
         )
 
     @request_with_type(overseerr_type=Request)
@@ -160,7 +117,7 @@ class OverseerrAPI:
         :rtype: Union[Request, ErrorResponse]
         """
         return await get(
-            self._url + f"/request/{id}", headers=self._headers, cookies=self._cookies
+            self._url + f"/request/{id}", headers=self._headers
         )
 
     @request_with_type(overseerr_type=MovieDetails)
@@ -174,7 +131,7 @@ class OverseerrAPI:
         :rtype: Union[MovieDetails, ErrorResponse]
         """
         return await get(
-            self._url + f"/movie/{id}", headers=self._headers, cookies=self._cookies
+            self._url + f"/movie/{id}", headers=self._headers
         )
 
     @request_with_type(overseerr_type=MovieSearchResult)
@@ -192,7 +149,6 @@ class OverseerrAPI:
         return await get(
             self._url + f"/movie/{id}/recommendations",
             headers=self._headers,
-            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=TVDetails)
@@ -206,7 +162,7 @@ class OverseerrAPI:
         :rtype: Union[TVDetails, ErrorResponse]
         """
         return await get(
-            self._url + f"/tv/{id}", headers=self._headers, cookies=self._cookies
+            self._url + f"/tv/{id}", headers=self._headers
         )
 
     @request_with_type(overseerr_type=TVDetails)
@@ -226,7 +182,6 @@ class OverseerrAPI:
         return await get(
             self._url + f"/tv/{id}/season/{season}",
             headers=self._headers,
-            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=TVSearchResponse)
@@ -242,7 +197,6 @@ class OverseerrAPI:
         return await get(
             self._url + f"/tv/{id}/recommendations",
             headers=self._headers,
-            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=Genre)
@@ -260,7 +214,6 @@ class OverseerrAPI:
         return await get(
             self._url + f"/genres/{media_type}",
             headers=self._headers,
-            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=Genre)
@@ -272,7 +225,7 @@ class OverseerrAPI:
         :rtype: Union[Genre, ErrorResponse]
         """
         return await get(
-            self._url + f"/genres/tv", headers=self._headers, cookies=self._cookies
+            self._url + f"/genres/tv", headers=self._headers
         )
 
     @request_with_type(overseerr_type=Genre)
@@ -284,7 +237,7 @@ class OverseerrAPI:
         :rtype: Union[Genre, ErrorResponse]
         """
         return await get(
-            self._url + f"/genres/movie", headers=self._headers, cookies=self._cookies
+            self._url + f"/genres/movie", headers=self._headers
         )
 
     async def post_request(
@@ -301,109 +254,58 @@ class OverseerrAPI:
         :type media_id: int
         :param media_type: The type of media to request. Either `"movie"` or `"tv"`
         :type media_type: str
-        :param user_id: The user to assign after creating with the service account's
-            cookie. Requires a logged-in session and an API key.
+        :param user_id: The Seerr user to act as through X-API-User. Seerr applies
+            that user's request permissions, approval rules, and request limits.
+            Omitting this uses the API key's administrator account.
         :type user_id: int
         :return: The request, or an error
         :rtype: Union[Request, ErrorResponse]
         """
         if media_type not in MEDIA_TYPES:
             raise RuntimeError(f"Invalid media type {media_type}")
+        headers = self._headers
         if user_id is not None:
-            if user_id <= 0:
+            if type(user_id) is not int or user_id <= 0:
                 return ErrorResponse(
                     message="The requester must have a valid Seerr user ID."
                 )
-            if not self._cookies or not self._api_key:
-                return ErrorResponse(
-                    message="Requesting for another user requires a service account "
-                    "session and an API key. Configure OVERSEERR_USER, OVERSEERR_PASS, "
-                    "and OVERSEERR_API_KEY."
-                )
+            # Scope impersonation to this call; reads and approvals use the admin key.
+            headers["X-API-User"] = str(user_id)
 
         body = RequestBody(media_id=media_id, media_type=media_type)
         if media_type == "tv":
             body.seasons = seasons
         self._logger.debug("Request body: %s", body.to_json())
-        # API-key authentication takes precedence over cookies in Seerr. Never
-        # send the key or target userId during this initial creation.
-        headers = (
-            {"Content-Type": "application/json"}
-            if user_id is not None
-            else self._headers
-        )
+        # A body userId only changes attribution and requires management permissions.
+        # The header above sets the authenticated user, including approval permissions.
         created = await post(
             self._url + "/request",
             body=body.to_json(),
             headers=headers,
-            cookies=self._cookies,
         )
         if isinstance(created, ErrorResponse):
             return created
-        if user_id is None:
-            return Request(created)
-        return await self._assign_request_user(created, media_type, user_id)
-
-    async def _assign_request_user(
-        self, created: dict, media_type: MediaTypes, user_id: int
-    ) -> Union[Request, RequestAssignmentError]:
-        request_id = created.get("id")
+        request_id = created.get("id") if isinstance(created, dict) else None
         try:
             if not request_id:
                 raise ValueError("Seerr did not return the created request's ID.")
-            if created.get("status") != 1:
+            request = Request(created)
+            if user_id is not None and request.requested_by.id != user_id:
                 raise ValueError(
-                    "Only pending requests can be reassigned. Disable Admin, Manage "
-                    "Requests, and Auto-Approve permissions on the service account."
-                )
-
-            body = {"mediaType": media_type, "userId": user_id}
-            # Preserve values selected by Seerr's defaults and override rules.
-            # Null optional fields must be omitted to satisfy its edit schema.
-            for field in ("is4k", "serverId", "profileId", "rootFolder", "tags"):
-                if created.get(field) is not None:
-                    body[field] = created[field]
-            if media_type == "tv":
-                body["seasons"] = [
-                    season["seasonNumber"] for season in created["seasons"]
-                ]
-                if not body["seasons"]:
-                    raise ValueError(
-                        "Seerr did not return any seasons for the created request."
-                    )
-                if created.get("languageProfileId") is not None:
-                    body["languageProfileId"] = created["languageProfileId"]
-
-            updated = await put(
-                self._url + f"/request/{request_id}",
-                body=body,
-                headers=self._headers_with_token,
-            )
-            if isinstance(updated, ErrorResponse):
-                raise RuntimeError(
-                    updated.message or "Seerr rejected the requester update."
-                )
-            request = Request(updated)
-            if (
-                request.id != request_id
-                or request.requested_by.id != user_id
-                or request.status != 1
-            ):
-                raise ValueError(
-                    "Seerr did not confirm the expected requester and pending status."
+                    "Seerr did not return the expected requester. Check that your "
+                    "server and reverse proxy support the X-API-User header."
                 )
             return request
         except Exception as error:
-            # The POST already succeeded. Preserve its ID even if the PUT times
-            # out or returns an invalid response, so callers cannot retry creation.
+            # Never retry as admin or reassign after a successful creation response.
             self._logger.exception(
-                "Request %s was created, but assignment to user %s was not confirmed",
+                "Request %s was created, but its attribution to user %s was not confirmed",
                 request_id,
                 user_id,
             )
-            return RequestAssignmentError(
+            return RequestAttributionError(
                 request_id=request_id,
-                message=str(error) or "The requester update could not be confirmed.",
+                message=str(error) or "The requester could not be confirmed.",
             )
 
     @request_with_type(overseerr_type=Request)
@@ -413,19 +315,19 @@ class OverseerrAPI:
         if status not in ["approve", "decline"]:
             raise RuntimeError(f"Invalid status {status}")
         return await post(
-            self._url + f"/request/{id}/{status}", headers=self._headers_with_token
+            self._url + f"/request/{id}/{status}", headers=self._headers
         )
 
     @request_with_type(overseerr_type=Request)
     async def deny_request(self, id: int) -> Union[Request, ErrorResponse]:
         return await post(
-            self._url + f"/request/{id}/decline", headers=self._headers_with_token
+            self._url + f"/request/{id}/decline", headers=self._headers
         )
 
     @request_with_type(overseerr_type=Request)
     async def approve_request(self, id: int) -> Union[Request, ErrorResponse]:
         return await post(
-            self._url + f"/request/{id}/approve", headers=self._headers_with_token
+            self._url + f"/request/{id}/approve", headers=self._headers
         )
 
     @request_with_type(overseerr_type=Requests)
@@ -470,39 +372,23 @@ class OverseerrAPI:
             self._url + "/request",
             params=params,
             headers=self._headers,
-            cookies=self._cookies,
         )
 
     @request_with_type(overseerr_type=User)
     async def _get_me(self) -> Union[User, ErrorResponse]:
         return await get(
-            self._url + "/auth/me", headers=self._headers, cookies=self._cookies
+            self._url + "/auth/me", headers=self._headers
         )
 
     @property
     def _headers(self) -> Dict[str, str]:
         """
         Headers to send with every request. Don't use this directly.
-        Prefer the user session when credentials were supplied, so requests
-        retain that user's permissions instead of using the admin API key.
+        User impersonation is added only to individual creation requests.
         :return: Overseerr headers
         :rtype: Dict[str, str]
         """
-        headers = {"Content-Type": "application/json"}
-        if self._api_key and not (self._email and self._password):
-            headers["X-Api-Key"] = self._api_key
-        return headers
-
-    @property
-    def _headers_with_token(self) -> Dict[str, str]:
-        headers = self._headers
-        if self._api_key:
-            headers["X-Api-Key"] = self._api_key
-        return headers
-
-    @property
-    def _cookies(self):
-        return self.__cookies
+        return {"Content-Type": "application/json", "X-Api-Key": self._api_key}
 
     @property
     def me(self) -> User:

@@ -15,7 +15,7 @@ from overseerrapi.types import (
     TVDetails,
     MovieDetails,
     ErrorResponse,
-    RequestAssignmentError,
+    RequestAttributionError,
 )
 
 import logging
@@ -299,13 +299,13 @@ class SearchView(OverseerrView):
             media_type=result.media_type,
             user_id=user_id
         )
-        if isinstance(response, RequestAssignmentError):
+        if isinstance(response, RequestAttributionError):
             self.clear_items()
             self.stop()
             request_id = f" (#{response.request_id})" if response.request_id else ""
             await interaction.edit_original_response(
                 content=f"Request for {title} was created{request_id}, but the requester "
-                f"update was not confirmed: {response.message} "
+                f"was not confirmed: {response.message} "
                 "Please contact the bot owner to check this request in Seerr.",
                 view=self,
             )
