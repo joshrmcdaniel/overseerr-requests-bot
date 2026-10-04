@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 
-from quota.admin import AdminQuotaActionsView
-from quota.models import GB, Snapshot
+from quota.admin import AdminRetentionList
+from quota.api import Server
+from quota.models import GB, Snapshot, StorageItem
 
 with patch.dict(os.environ, {"GUILD_ID": "1"}):
     from overseerr import Overseerr
@@ -20,7 +21,11 @@ class AdminQuotaTests(unittest.IsolatedAsyncioTestCase):
         self.cog._discord_id_map = {200: 7, 201: 7}
         self.snapshot = Snapshot(
             user_id=7, limit=500 * GB, used=430 * GB, reserved=20 * GB,
-            items=[Mock(), Mock()],
+            items=[StorageItem(
+                f"radarr:0:{i}", f"Movie {i}",
+                Server("radarr", 0, "Radarr", "http://radarr", "key"),
+                i, "movie", 1000 + i, None, None, 215 * GB, frozenset({7}), (), True,
+            ) for i in (11, 12)],
             requests=[
                 {"id": 1, "requestedBy": {"id": 7}, "status": 1},
                 {"id": 2, "requestedBy": {"id": 7}, "status": 2},
@@ -60,16 +65,19 @@ class AdminQuotaTests(unittest.IsolatedAsyncioTestCase):
         self.ctx.defer.assert_awaited_once_with(ephemeral=True)
         self.ctx.respond.assert_not_awaited()
         response = self.ctx.edit.call_args.kwargs
-        self.assertIsInstance(response["view"], AdminQuotaActionsView)
+        self.assertIsInstance(response["view"], AdminRetentionList)
         self.addCleanup(response["view"].stop)
         embed = response["embed"]
         self.assertIn(self.target.display_name, embed.title)
         self.assertIn("**Downloaded:** 430.0 GB", embed.description)
         self.assertIn("**Reserved for downloads:** 20.0 GB", embed.description)
         self.assertIn("**Remaining:** 50.0 GB of 500.0 GB", embed.description)
-        self.assertEqual({field.name: field.value for field in embed.fields}, {
-            "Downloaded movies / seasons": "2", "Pending requests": "1",
-        })
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertEqual(fields["Downloaded movies / seasons"], "2")
+        self.assertEqual(fields["Pending requests"], "1")
+        self.assertIn("Counts toward quota", fields["Movie 11"])
+        self.assertIn("Counts toward quota", fields["Movie 12"])
+        self.assertEqual([option.label for option in response["view"].selector.options], ["Movie 11", "Movie 12"])
         manager.remove.assert_not_awaited()
         manager.auto_approve.assert_not_awaited()
 

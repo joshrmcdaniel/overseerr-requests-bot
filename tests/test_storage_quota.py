@@ -377,6 +377,28 @@ class StorageQuotaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.manager.snapshot(7)).used, 0)
         self.assertTrue((await self.manager.auto_approve(7, 1)).approved)
 
+    async def test_keep_and_restore_one_movie_leave_other_movies_charged_and_removable(self):
+        self.api.movies = [movie(11, 1001, 10 * GB), movie(12, 1002, 20 * GB), movie(13, 1003, 30 * GB)]
+        before = copy.deepcopy((self.api.movies, self.api.records))
+        snapshot = await self.manager.snapshot(7)
+        selected = next(item for item in snapshot.items if item.tmdb_id == 1002)
+        kept = await self.manager.retain(7, selected, 100)
+        snapshot = await QuotaManager(self.api, self.config).snapshot(7)
+        self.assertEqual(snapshot.used, 40 * GB)
+        self.assertEqual({item.tmdb_id for item in snapshot.items}, {1001, 1003})
+        self.assertTrue(all(item.removable for item in snapshot.items))
+        self.assertEqual([item.media_id for item in snapshot.retained_items], [1002])
+        # A separate exception remains when the selected movie is restored.
+        other = next(item for item in snapshot.items if item.tmdb_id == 1003)
+        await self.manager.retain(7, other, 100)
+        await self.manager.restore_retained(7, kept, 100)
+        snapshot = await self.manager.snapshot(7)
+        self.assertEqual(snapshot.used, 30 * GB)
+        self.assertEqual({item.tmdb_id for item in snapshot.items}, {1001, 1002})
+        self.assertEqual([item.media_id for item in snapshot.retained_items], [1003])
+        self.assertEqual((self.api.movies, self.api.records), before)
+        self.assertTrue(all(call[1] == "GET" for call in self.api.calls))
+
     async def test_retention_does_not_follow_reused_arr_id_to_a_different_movie(self):
         item = (await self.manager.snapshot(7)).items[0]
         await self.manager.retain(7, item, 100)

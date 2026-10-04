@@ -13,10 +13,10 @@ from typing import Dict, Any
 
 from views import SearchView, RequestsView
 from quota.api import QuotaAPI
-from quota.admin import AdminQuotaActionsView
-from quota.manager import QuotaManager, owner_id
+from quota.admin import AdminRetentionList
+from quota.manager import QuotaManager
 from quota.models import QuotaConfig
-from quota.views import StorageView, quota_summary_embed
+from quota.views import StorageView
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ class Overseerr(commands.Cog):
         await ctx.edit(embed=view.embed, view=view)
 
     @slash_command(
-        name="quota-user", description="View another member's storage allowance (admins only).",
+        name="quota-user", description="Manage a member's quota by movie or TV season (admins only).",
         guild_ids=[int(os.environ.get("GUILD_ID"))],
         default_member_permissions=discord.Permissions(administrator=True),
     )
@@ -251,27 +251,20 @@ class Overseerr(commands.Cog):
             await ctx.respond("That member is not linked to a Seerr account.", ephemeral=True)
             return
         await ctx.defer(ephemeral=True)
+        view = AdminRetentionList(
+            self.quota_manager, ctx.author.id, user_id, user.display_name, ctx.guild.id
+        )
         try:
-            snapshot = await self.quota_manager.snapshot(user_id)
+            await view.load()
         except Exception:
+            view.stop()
             log.exception(
                 "Could not load quota for Seerr user %s requested by admin %s",
                 user_id, ctx.author.id,
             )
             await ctx.edit(content="Could not read storage usage. Try again later.")
             return
-        embed = quota_summary_embed(snapshot, title=f"Storage allowance for {user.display_name}")
-        embed.add_field(name="Downloaded movies / seasons", value=str(len(snapshot.items)))
-        pending = sum(
-            owner_id(request) == user_id and request["status"] == 1
-            for request in snapshot.requests
-        )
-        embed.add_field(name="Pending requests", value=str(pending))
-        embed.set_footer(text=f"Seerr user {user_id} · Shared across their linked Discord accounts")
-        view = AdminQuotaActionsView(
-            self.quota_manager, ctx.author.id, user_id, user.display_name, ctx.guild.id
-        )
-        await ctx.edit(embed=embed, view=view)
+        await ctx.edit(embed=view.embed, view=view)
 
     def get_search_view(
         self, results: MediaSearchResult, search_query: str, user_id: int

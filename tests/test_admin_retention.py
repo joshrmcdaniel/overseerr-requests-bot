@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, PropertyMock, patch
 
 import discord
 
-from quota.admin import AdminQuotaActionsView, AdminRetentionList, RetentionConfirmation
+from quota.admin import AdminRetentionList, RetentionConfirmation
 from quota.api import QuotaError, Server
 from quota.models import GB, RetainedItem, Snapshot, StorageItem
 
@@ -45,11 +45,11 @@ class AdminRetentionTests(unittest.IsolatedAsyncioTestCase):
         return view
 
     async def test_non_admin_other_admin_and_wrong_guild_cannot_open_management(self):
-        view = self.view(AdminQuotaActionsView)
+        view = self.view(AdminRetentionList)
         for options in ({"admin": False}, {"user_id": 200}, {"guild_id": None}, {"guild_id": 2}):
             with self.subTest(options=options):
                 click = interaction(**options)
-                await view.keep.callback(click)
+                await view.refresh.callback(click)
                 click.response.send_message.assert_awaited_once()
                 self.assertTrue(click.response.send_message.call_args.kwargs["ephemeral"])
         self.manager.snapshot.assert_not_awaited()
@@ -58,7 +58,7 @@ class AdminRetentionTests(unittest.IsolatedAsyncioTestCase):
         view = self.view(AdminRetentionList)
         await view.load()
         click = interaction()
-        with patch.object(discord.ui.Select, "values", new_callable=PropertyMock, return_value=[self.item.key]):
+        with patch.object(discord.ui.Select, "values", new_callable=PropertyMock, return_value=[view.selector.options[0].value]):
             await view.select_item(click)
         confirmation = self.result_view(click)
         self.assertIsInstance(confirmation, RetentionConfirmation)
@@ -109,10 +109,11 @@ class AdminRetentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_retained_items_can_be_restored_without_deletion(self):
         item = RetainedItem.from_storage(7, self.item, whole_series=True)
         self.snapshot.retained_items = [item]
-        view = self.view(AdminRetentionList, True)
+        view = self.view(AdminRetentionList)
         await view.load()
         click = interaction()
-        with patch.object(discord.ui.Select, "values", new_callable=PropertyMock, return_value=[item.key]):
+        selected = next(option.value for option in view.selector.options if "Kept outside quota" in option.description)
+        with patch.object(discord.ui.Select, "values", new_callable=PropertyMock, return_value=[selected]):
             await view.select_item(click)
         confirmation = self.result_view(click)
         self.assertTrue(confirmation.restore)
@@ -122,6 +123,56 @@ class AdminRetentionTests(unittest.IsolatedAsyncioTestCase):
         await confirmation.confirm.callback(click)
         self.result_view(click)
         self.manager.restore_retained.assert_awaited_once_with(7, item, 100)
+        self.manager.remove.assert_not_awaited()
+
+    async def test_individual_movies_are_visible_and_only_selected_movie_is_kept(self):
+        server = Server("radarr", 0, "Radarr", "http://radarr", "key")
+        movies = [StorageItem(
+            f"radarr:0:{i}", title, server, i, "movie", 1000 + i, None, None,
+            10 * GB, frozenset({7}), (i,), True,
+        ) for i, title in ((11, "Movie A"), (12, "Movie B"))]
+        self.snapshot.items = movies
+        kept = RetainedItem.from_storage(7, replace(movies[0], tmdb_id=1013, title="Movie C"))
+        self.snapshot.retained_items = [kept]
+        view = self.view(AdminRetentionList)
+        await view.load()
+        self.assertEqual([option.label for option in view.selector.options], ["Movie A", "Movie B", "Movie C"])
+        self.assertIn("Counts toward quota", view.selector.options[1].description)
+        self.assertIn("Kept outside quota", view.selector.options[2].description)
+        self.assertEqual(view.selector.max_values, 1)
+        click = interaction()
+        with patch.object(discord.ui.Select, "values", new_callable=PropertyMock, return_value=[view.selector.options[1].value]):
+            await view.select_item(click)
+        confirmation = self.result_view(click)
+        self.assertIs(confirmation.item, movies[1])
+        self.assertEqual(confirmation.confirm.label, "Keep this movie")
+        self.assertNotIn(confirmation.whole_show, confirmation.children)
+        self.manager.retain.assert_not_awaited()
+        click = interaction()
+        await confirmation.confirm.callback(click)
+        self.result_view(click)
+        self.manager.retain.assert_awaited_once_with(7, movies[1], 100, whole_series=False)
+        self.manager.restore_retained.assert_not_awaited()
+        self.manager.remove.assert_not_awaited()
+        self.assertIn("Movie B", click.edit_original_response.call_args.kwargs["content"])
+
+    async def test_filters_only_change_visible_titles_and_keep_single_item_controls(self):
+        kept = RetainedItem.from_storage(7, replace(self.item, season=2, title="Show — Season 2"))
+        self.snapshot.retained_items = [kept]
+        view = self.view(AdminRetentionList)
+        await view.load()
+        for selected, labels in (
+            ("kept", ["Show — Season 2"]),
+            ("charged", ["Show — Season 1"]),
+            ("all", ["Show — Season 1", "Show — Season 2"]),
+        ):
+            with patch.object(discord.ui.Select, "values", new_callable=PropertyMock, return_value=[selected]):
+                await view.select_filter(interaction())
+            self.assertEqual([option.label for option in view.selector.options], labels)
+            self.assertFalse(view.selector.disabled)
+            self.assertFalse(view.filter_selector.disabled)
+        self.manager.retain.assert_not_awaited()
+        self.manager.restore_retained.assert_not_awaited()
         self.manager.remove.assert_not_awaited()
 
     async def test_list_paginates_large_libraries_and_refreshes_current_state(self):
