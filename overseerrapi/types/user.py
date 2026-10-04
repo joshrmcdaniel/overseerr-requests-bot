@@ -29,7 +29,7 @@ class UserSettings(jsonobject.JsonObject):
     region = jsonobject.StringProperty(name="region")
     original_language = jsonobject.StringProperty(name="originalLanguage")
     pgp_key = jsonobject.StringProperty(name="pgpKey")
-    discord_id = jsonobject.StringProperty(name="discordId")
+    discord_ids = jsonobject.ListProperty(lambda: str, name="discordIds")
     pushbullet_access_token = jsonobject.StringProperty(name="pushbulletAccessToken")
     pushbullet_application_token = jsonobject.StringProperty(
         name="pushbulletApplicationToken"

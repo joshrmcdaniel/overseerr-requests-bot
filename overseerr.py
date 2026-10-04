@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 class Overseerr(commands.Cog):
     def __init__(self, bot: discord.Bot):
         self._bot = bot
+        self._discord_id_map: Dict[int, int] = {}
         self.overseerr_client = OverseerrAPI(
             url=os.environ.get("OVERSEERR_URL"),
             email=os.environ.get("OVERSEERR_USER"),
@@ -29,11 +30,27 @@ class Overseerr(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         log.info("Overseerr cog loading...")
-        log.info("Starting Discord ID map task..")
-        # self.map_discord_ids.start()
-        self.map_genre_ids.start()
-        log.info("Discord ID map task started")
+        for job in (self.refresh_cookie, self.map_discord_ids, self.map_genre_ids):
+            if not job.is_running():
+                job.start()
         log.info("Overseerr cog ready.")
+
+    def cog_unload(self):
+        self.refresh_cookie.cancel()
+        self.map_discord_ids.cancel()
+        self.map_genre_ids.cancel()
+
+    @tasks.loop(hours=24)
+    async def refresh_cookie(self):
+        try:
+            refreshed = await self.overseerr_client.refresh_session()
+        except Exception:
+            log.exception("Seerr cookie refresh failed; retrying in five minutes")
+            self.refresh_cookie.change_interval(minutes=5)
+        else:
+            self.refresh_cookie.change_interval(hours=24)
+            if refreshed:
+                log.info("Refreshed Seerr service account cookie")
 
     @tasks.loop(hours=1)
     async def map_discord_ids(self):
@@ -42,7 +59,22 @@ class Overseerr(commands.Cog):
         users = await self.overseerr_client.users()
         for user in users.results:
             user_full = await self.overseerr_client.user(user.id)
-            discord_id_map[int(user_full.settings.discord_id)] = user_full.id
+            if user_full.settings is None:
+                continue
+            for value in user_full.settings.discord_ids or []:
+                try:
+                    discord_id = int(value)
+                except (TypeError, ValueError):
+                    log.warning(
+                        "Skipping invalid Discord ID for Overseerr user %s", user.id
+                    )
+                    continue
+                if discord_id <= 0:
+                    log.warning(
+                        "Skipping invalid Discord ID for Overseerr user %s", user.id
+                    )
+                    continue
+                discord_id_map[discord_id] = user_full.id
 
         self._discord_id_map = discord_id_map
         log.info("Updated discord user id map")
@@ -50,7 +82,7 @@ class Overseerr(commands.Cog):
 
     @tasks.loop(hours=168)
     async def map_genre_ids(self):
-        movies = await self.overseerr_client.get_tv_genres()
+        movies = await self.overseerr_client.get_movie_genres()
         tvs = await self.overseerr_client.get_tv_genres()
         genre_id_map = {
             "movie": {x["id"]: x["name"] for x in movies},
@@ -106,6 +138,7 @@ class Overseerr(commands.Cog):
             int,
             "Amount of results to show per page.",
             name="page_size",
+            min_value=1,
             required=False,
             default=20,
         ),
@@ -113,6 +146,7 @@ class Overseerr(commands.Cog):
             int,
             "Amount of results to skip; offset to start at.",
             name="offset",
+            min_value=0,
             required=False,
             default=0,
         ),
@@ -168,7 +202,7 @@ class Overseerr(commands.Cog):
         return RequestsView(
             user_id=user_id,
             overseerr_client=self.overseerr_client,
-            discord_id_map={},  # self._discord_id_map,
+            discord_id_map=self._discord_id_map,
             genre_id_map=self._genre_id_map,
             requests=requests,
             params=params,
@@ -182,7 +216,7 @@ class Overseerr(commands.Cog):
             overseerr_client=self.overseerr_client,
             results=results,
             search_query=search_query,
-            discord_id_map={},  # self._discord_id_map,
+            discord_id_map=self._discord_id_map,
             genre_id_map=self._genre_id_map,
         )
 

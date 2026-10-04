@@ -21,7 +21,7 @@ from .media import (
 from .movie import MovieDetails, MovieResult, MovieSearchResult
 from .tv import TvResult, TVDetails, TVEpisode, TVSeason, TVSearchResponse
 from .search import MediaSearchResult, UserSearchResult
-from .error import ErrorResponse
+from .error import ErrorResponse, RequestAssignmentError
 from .user import User
 from .load import load_json as _load_type
 from .requests import Requests, Request, RequestCount, RequestBody, RequestsFilterByOpts, RequestsSortOpts, REQUESTS_FILTER_OPTS, REQUESTS_SORT_OPTS
@@ -37,6 +37,7 @@ __all__ = [
     "UserSearchResult",
     "MediaInfo",
     "ErrorResponse",
+    "RequestAssignmentError",
     "User",
     "RequestBody",
     "Request",

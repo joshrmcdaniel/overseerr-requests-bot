@@ -19,11 +19,11 @@ __all__ = ["get", "post", "put"]
 def empty_string_to_none(values: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(values, list):
         for i, v in enumerate(values):
-            if not v:
+            if v == "":
                 values[i] = None
     elif isinstance(values, dict):
         for k in values:
-            if not values[k]:
+            if values[k] == "":
                 values[k] = None
     return values
 

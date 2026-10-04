@@ -30,7 +30,7 @@ REQUESTS_FILTER_OPTS = get_args(RequestsFilterByOpts)
 class RequestBody(jsonobject.JsonObject):
     media_id = jsonobject.IntegerProperty(name="mediaId", required=True)
     media_type = jsonobject.StringProperty(name="mediaType", required=True)
-    user_id = jsonobject.IntegerProperty(name="userId")
+    user_id = jsonobject.IntegerProperty(name="userId", exclude_if_none=True)
     tvdb_id = jsonobject.IntegerProperty(name="tvdbId", exclude_if_none=True)
     seasons = jsonobject.DefaultProperty(name="seasons", exclude_if_none=True)
     is_4k = jsonobject.BooleanProperty(name="is4k", exclude_if_none=True)
@@ -76,4 +76,4 @@ class Requests(jsonobject.JsonObject):
     page_info = jsonobject.ObjectProperty(
         lambda: PageInfo, name="pageInfo", required=True
     )
-    results = jsonobject.ListProperty(lambda: Request, name="results", required=True)
+    results = jsonobject.ListProperty(lambda: Request, name="results")

@@ -14,6 +14,8 @@ from overseerrapi.types import (
     MediaInfo,
     TVDetails,
     MovieDetails,
+    ErrorResponse,
+    RequestAssignmentError,
 )
 
 import logging
@@ -135,6 +137,17 @@ class OverseerrView(discord.ui.View):
     async def check_interaction(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.cmd_by_user_id
 
+    async def _show_api_error(
+        self, interaction: discord.Interaction, error: ErrorResponse
+    ) -> None:
+        self.enable_all_items()
+        await self._update_buttons()
+        await interaction.edit_original_response(
+            content=f"Overseerr could not complete the action: {error.message or 'Unknown error.'}",
+            embed=self.embed,
+            view=self,
+        )
+
     @property
     def poster_base(self) -> str:
         return "https://image.tmdb.org/t/p/w342"
@@ -198,59 +211,55 @@ class SearchView(OverseerrView):
     async def previous(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
-        self._index -= 1
-        button.disabled = self.previous_button_disabled
-        await self._paginate(interaction)
+        await self._move(-1, interaction)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label=">")
     async def next(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
-        self._index += 1
-        button.disabled = self.next_button_disabled
-        if self._needs_next_page:
-            self._results = await self._get_page(self._results.page + 1)
+        await self._move(1, interaction)
+
+    async def _move(self, direction: int, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if (direction < 0 and self.previous_button_disabled) or (
+            direction > 0 and self.next_button_disabled
+        ):
+            return
+
+        index = self._index + direction
+        if 0 <= index < len(self._results.results):
+            self._index = index
+        else:
+            results = await self._get_page(self._results.page + direction)
+            if isinstance(results, ErrorResponse):
+                await self._show_api_error(interaction, results)
+                return
+            self._results = results
+            self._index = 0 if direction > 0 else max(0, len(results.results) - 1)
         await self._paginate(interaction)
 
-    @property
-    def _needs_next_page(self) -> bool:
-        return self._index == 20 and self._results.page > self._results.total_pages
-
-    @property
-    def _needs_previous_page(self) -> bool:
-        return self._index == 0 and 1 < self._results.page < self._results.total_pages
-
-    async def _get_page(self, page: int) -> MediaSearchResult:
-        self._index = 0
+    async def _get_page(self, page: int) -> Union[MediaSearchResult, ErrorResponse]:
         res = await self.overseerr_client.search(self._query, page=page)
-        logger.trace("Returing page data: {}", res)
+        logger.trace("Returning page data: %s", res)
+        return res
 
     @property
     def previous_button_disabled(self) -> bool:
-        return self._results.page == 1 and self._index <= 0
+        return self._results.page <= 1 and self._index <= 0
 
     @property
     def next_button_disabled(self) -> bool:
         return (
-            self._results.total_pages == self._results.page
-            and self._index * self._results.page >= self.result_count - 1
+            self._results.page >= self._results.total_pages
+            and self._index >= len(self._results.results) - 1
         )
 
     @property
-    async def results(self):
-        if self._needs_previous_page:
-            await setattr(
-                self, "_results", await self._get_page(self._results.page - 1)
-            )
-            self._results = await self._get_page(self._results.page - 1)
-        if self._needs_next_page:
-            self._results = await setattr(
-                self, "_results", self._get_page(self._results.page + 1)
-            )
+    def results(self) -> MediaSearchResult:
         return self._results
 
     @property
-    def result(self) -> Union[MovieResult, TVDetails, PersonResult]:
+    def result(self) -> Union[MovieResult, TvResult, PersonResult]:
         return self._results.results[self._index]
 
     @property
@@ -258,34 +267,53 @@ class SearchView(OverseerrView):
         return self._results.total_results
 
     @results.setter
-    async def results(self, value):
+    def results(self, value: MediaSearchResult):
         self._results = value
 
     @discord.ui.button(style=discord.ButtonStyle.success, label="Request")
     async def request(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
-        button.disabled = True
+        if self.is_finished() or button.disabled:
+            await interaction.response.defer()
+            return
+        result = self.result
+        title = self.embed.title
         self.disable_all_items()
-        self.clear_items()
-        self.stop()
         await interaction.response.edit_message(
-            content=f"Sending requests for {self.embed.title}...",
+            content=f"Sending request for {title}...",
             view=self,
             embed=self.embed,
         )
-        # user_id = self._discord_id_map.get(interaction.user.id, None)
-        # if user_id is None:
-        #     await interaction.edit_original_response(
-        #         content="You are not registered with Overseerr."
-        #     )
-        #     return
-        await self.overseerr_client.post_request(
-            media_id=self.result.id,
-            media_type=self.result.media_type,
+        user_id = self._discord_id_map.get(interaction.user.id, None)
+        if user_id is None:
+            await interaction.edit_original_response(
+                content="You are not registered with Overseerr. Please contact the owner."
+            )
+            return
+        response = await self.overseerr_client.post_request(
+            media_id=result.id,
+            media_type=result.media_type,
+            user_id=user_id
         )
+        if isinstance(response, RequestAssignmentError):
+            self.clear_items()
+            self.stop()
+            request_id = f" (#{response.request_id})" if response.request_id else ""
+            await interaction.edit_original_response(
+                content=f"Request for {title} was created{request_id}, but the requester "
+                f"update was not confirmed: {response.message} "
+                "Please contact the bot owner to check this request in Seerr.",
+                view=self,
+            )
+            return
+        if isinstance(response, ErrorResponse):
+            await self._show_api_error(interaction, response)
+            return
+        self.clear_items()
+        self.stop()
         await interaction.edit_original_response(
-            content=f"Request for {self.embed.title} sent! 🎉"
+            content=f"Request for {title} sent! 🎉", view=self
         )
 
     @discord.ui.button(style=discord.ButtonStyle.danger, label="Cancel")
@@ -298,7 +326,7 @@ class SearchView(OverseerrView):
 
     async def _paginate(self, interaction: discord.Interaction) -> None:
         await self._edit_embed()
-        await interaction.response.edit_message(embed=self.embed, view=self)
+        await interaction.edit_original_response(embed=self.embed, view=self, content="")
 
     async def _update_buttons(self) -> None:
         """
@@ -333,7 +361,8 @@ class SearchView(OverseerrView):
         self.children[2].label = status_map.get(status, "Request")
 
     async def _edit_embed(self) -> None:
-        if self._results.results == []:
+        if not self._results.results:
+            self.clear_embed()
             self.embed.title = "No Results Found"
             self.embed.description = f"No results found for {self._query}"
             self.embed.set_image(
@@ -375,89 +404,117 @@ class RequestsView(OverseerrView):
         )
         self._index: int = 0
         self._requests: Requests = requests
-        self._requests_length: int = (
-            requests.page_info.pages * requests.page_info.page_size
-        )
-        self._params = params
+        self._params = dict(params)
 
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
     async def previous(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
-        self._index -= 1
-        button.disabled = self.result_number <= 1
-        if self._index < 0 and self.page_info.page > self.page_info.pages:
-            self._requests = await self.get_results_page(-1)
-            self._index = 0
-        await self._paginate(interaction)
+        await self._move(-1, interaction)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label=">")
     async def next(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
-        self._index += 1
-        button.disabled = self.disable_next_button()
-        if self.result_number > self.page_info.results:
-            self._requests = await self.get_results_page(1)
-            self._index = 0
+        await self._move(1, interaction)
+
+    async def _move(self, direction: int, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if (direction < 0 and self.previous_button_disabled) or (
+            direction > 0 and self.next_button_disabled
+        ):
+            return
+
+        index = self._index + direction
+        if 0 <= index < len(self._requests.results):
+            self._index = index
+        else:
+            position = self.result_number - 1 + direction
+            requests = await self.get_results_page(direction)
+            if isinstance(requests, ErrorResponse):
+                await self._show_api_error(interaction, requests)
+                return
+            self._requests = requests
+            self._index = max(
+                0, min(position - self._params["skip"], len(requests.results) - 1)
+            )
         await self._paginate(interaction)
 
-    def disable_next_button(self) -> bool:
-        return self.result_number == self.page_info.results
+    @property
+    def previous_button_disabled(self) -> bool:
+        return self._params["skip"] == 0 and self._index <= 0
 
-    async def get_results_page(self, page: int) -> MediaSearchResult:
-        self._params["skip"] = self.page_info.page * (self._params["take"] + page)
-        return await self.overseerr_client.get_all_requests(**self._params)
+    @property
+    def next_button_disabled(self) -> bool:
+        return self.result_number >= self.result_count
+
+    async def get_results_page(self, page: int) -> Union[Requests, ErrorResponse]:
+        params = dict(self._params)
+        params["skip"] = max(0, params["skip"] + params["take"] * page)
+        response = await self.overseerr_client.get_all_requests(**params)
+        if not isinstance(response, ErrorResponse):
+            self._params = params
+        return response
 
     @discord.ui.button(style=discord.ButtonStyle.success, label="Approve")
     async def approve(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
-        button.disabled = True
+        request_id = self.request.id
+        title = self.embed.title
         self.disable_all_items()
-        self.stop()
         await interaction.response.edit_message(
             view=self, embed=self.embed, content="Approving..."
         )
-        resp = await self.overseerr_client.approve_request(self.request.id)
+        resp = await self.overseerr_client.approve_request(request_id)
+        if isinstance(resp, ErrorResponse):
+            await self._show_api_error(interaction, resp)
+            return
+        self.stop()
         logger.debug(
-            "Sent approval request for {}, (ID: {})", self.embed.title, self.request.id
+            "Sent approval request for %s, (ID: %s)", title, request_id
         )
         logger.trace("Response body: %s", resp)
 
         await interaction.edit_original_response(
-            content=f"Request for {self.embed.title} Approved! 🎉"
+            content=f"Request for {title} Approved! 🎉"
         )
 
     @discord.ui.button(style=discord.ButtonStyle.danger, label="Deny")
     async def cancel(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
+        request_id = self.request.id
+        title = self.embed.title
         self.disable_all_items()
-        self.stop()
         await interaction.response.edit_message(
             view=self, embed=self.embed, content="Denying..."
         )
-        await self.overseerr_client.deny_request(self.request.id)
+        response = await self.overseerr_client.deny_request(request_id)
+        if isinstance(response, ErrorResponse):
+            await self._show_api_error(interaction, response)
+            return
+        self.stop()
         await interaction.edit_original_response(
-            content=f"Request for {self.embed.title} denied"
+            content=f"Request for {title} denied"
         )
 
     async def _paginate(self, interaction: discord.Interaction) -> None:
         await self._edit_embed()
-        await interaction.response.edit_message(embed=self.embed, view=self)
+        await interaction.edit_original_response(embed=self.embed, view=self, content="")
 
     async def _update_buttons(self) -> None:
         """
         Done for embed time check
         """
         # Previous button
-        self.children[0].disabled = self.page_info.page == 1 and self._index <= 0
+        self.children[0].disabled = self.previous_button_disabled
         # Next button
-        self.children[1].disabled = self.result_number == self.page_info.results
+        self.children[1].disabled = self.next_button_disabled
 
     async def _edit_embed(self) -> None:
-        if self.page_info.results == 0:
+        if not self._requests.results:
+            self.clear_embed()
             self.embed.title = "No requests"
             self.embed.description = f"No current requests. You are caught up."
             self.clear_items()
@@ -485,7 +542,7 @@ class RequestsView(OverseerrView):
     @property
     def result_number(self) -> int:
         """Returns index adjusted for pagination. Index starts at 1"""
-        return (self._index + 1) + (self.page_info.page - 1) * 20
+        return self._params["skip"] + self._index + 1
 
     @property
     def result_count(self) -> int:

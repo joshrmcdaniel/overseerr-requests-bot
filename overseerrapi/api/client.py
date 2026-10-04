@@ -1,7 +1,7 @@
 import logging
 import sys
 import asyncio
-from aiohttp import ClientResponse, ClientResponseError
+from aiohttp import ClientResponse
 from functools import partial, partialmethod
 from typing import (
     Dict,
@@ -14,7 +14,6 @@ from typing import (
 )
 from ..shared.networking import get, post, put
 from ..types import *
-from ..types.load import load_error
 from ..shared.wrappers import _request_with_type as request_with_type
 
 
@@ -38,6 +37,7 @@ class OverseerrAPI:
         self._me = None
         self._password: str = password
         self._email: str = email
+        self.__cookies = {}
 
         self._logger = logging.getLogger(__name__)
         ch = logging.StreamHandler(log_file)
@@ -52,7 +52,9 @@ class OverseerrAPI:
         if email and password:
             asyncio.run(self._login(email, password))
 
-    async def _login(self, email: Optional[str], password: Optional[str]) -> None:
+    async def _login(
+        self, email: Optional[str] = None, password: Optional[str] = None
+    ) -> None:
         self._logger.debug("Logging in with email and password")
         if email is None:
             email = self._email
@@ -66,18 +68,24 @@ class OverseerrAPI:
         login: ClientResponse = await post(
             self._url + "/auth/local",
             body={"email": email, "password": password},
-            headers=self._headers,
+            headers={"Content-Type": "application/json"},
             raw=True,
         )
-        print(login)
-        try:
-            login.raise_for_status()
-        except ClientResponseError as cre:
-            login_err = load_error(login.json())
-            self._logger.error("Error while logging in: %s", login_err.message)
-            raise cre
+        login.raise_for_status()
+        session_cookie = login.cookies.get("connect.sid")
+        if not getattr(session_cookie, "value", session_cookie):
+            raise RuntimeError("Seerr login did not return a session cookie.")
+        # Keep the current cookie until a replacement login has fully succeeded.
         self.__cookies = login.cookies
+        self._me = None
         self._logger.debug("Successfully logged in")
+
+    async def refresh_session(self) -> bool:
+        """Refresh the service account cookie, or skip API-key-only clients."""
+        if not (self._email and self._password):
+            return False
+        await self._login()
+        return True
 
     @request_with_type(overseerr_type=MediaSearchResult)
     async def search(
@@ -279,9 +287,12 @@ class OverseerrAPI:
             self._url + f"/genres/movie", headers=self._headers, cookies=self._cookies
         )
 
-    @request_with_type(overseerr_type=Request)
     async def post_request(
-        self, media_id: int, media_type: MediaTypes, user_id: Optional[int] = None, seasons: Union[List[int], Literal['all']] = "all"
+        self,
+        media_id: int,
+        media_type: MediaTypes,
+        user_id: Optional[int] = None,
+        seasons: Union[List[int], Literal["all"]] = "all",
     ) -> Union[Request, ErrorResponse]:
         """
         Add a request for a movie or TV show
@@ -290,25 +301,110 @@ class OverseerrAPI:
         :type media_id: int
         :param media_type: The type of media to request. Either `"movie"` or `"tv"`
         :type media_type: str
-        :param user_id: The ID of the user to request the media for
+        :param user_id: The user to assign after creating with the service account's
+            cookie. Requires a logged-in session and an API key.
         :type user_id: int
         :return: The request, or an error
         :rtype: Union[Request, ErrorResponse]
         """
         if media_type not in MEDIA_TYPES:
             raise RuntimeError(f"Invalid media type {media_type}")
+        if user_id is not None:
+            if user_id <= 0:
+                return ErrorResponse(
+                    message="The requester must have a valid Seerr user ID."
+                )
+            if not self._cookies or not self._api_key:
+                return ErrorResponse(
+                    message="Requesting for another user requires a service account "
+                    "session and an API key. Configure OVERSEERR_USER, OVERSEERR_PASS, "
+                    "and OVERSEERR_API_KEY."
+                )
+
         body = RequestBody(media_id=media_id, media_type=media_type)
         if media_type == "tv":
             body.seasons = seasons
-        if user_id:
-            body.user_id = user_id
         self._logger.debug("Request body: %s", body.to_json())
-        return await post(
+        # API-key authentication takes precedence over cookies in Seerr. Never
+        # send the key or target userId during this initial creation.
+        headers = (
+            {"Content-Type": "application/json"}
+            if user_id is not None
+            else self._headers
+        )
+        created = await post(
             self._url + "/request",
             body=body.to_json(),
-            headers=self._headers,
+            headers=headers,
             cookies=self._cookies,
         )
+        if isinstance(created, ErrorResponse):
+            return created
+        if user_id is None:
+            return Request(created)
+        return await self._assign_request_user(created, media_type, user_id)
+
+    async def _assign_request_user(
+        self, created: dict, media_type: MediaTypes, user_id: int
+    ) -> Union[Request, RequestAssignmentError]:
+        request_id = created.get("id")
+        try:
+            if not request_id:
+                raise ValueError("Seerr did not return the created request's ID.")
+            if created.get("status") != 1:
+                raise ValueError(
+                    "Only pending requests can be reassigned. Disable Admin, Manage "
+                    "Requests, and Auto-Approve permissions on the service account."
+                )
+
+            body = {"mediaType": media_type, "userId": user_id}
+            # Preserve values selected by Seerr's defaults and override rules.
+            # Null optional fields must be omitted to satisfy its edit schema.
+            for field in ("is4k", "serverId", "profileId", "rootFolder", "tags"):
+                if created.get(field) is not None:
+                    body[field] = created[field]
+            if media_type == "tv":
+                body["seasons"] = [
+                    season["seasonNumber"] for season in created["seasons"]
+                ]
+                if not body["seasons"]:
+                    raise ValueError(
+                        "Seerr did not return any seasons for the created request."
+                    )
+                if created.get("languageProfileId") is not None:
+                    body["languageProfileId"] = created["languageProfileId"]
+
+            updated = await put(
+                self._url + f"/request/{request_id}",
+                body=body,
+                headers=self._headers_with_token,
+            )
+            if isinstance(updated, ErrorResponse):
+                raise RuntimeError(
+                    updated.message or "Seerr rejected the requester update."
+                )
+            request = Request(updated)
+            if (
+                request.id != request_id
+                or request.requested_by.id != user_id
+                or request.status != 1
+            ):
+                raise ValueError(
+                    "Seerr did not confirm the expected requester and pending status."
+                )
+            return request
+        except Exception as error:
+            # The POST already succeeded. Preserve its ID even if the PUT times
+            # out or returns an invalid response, so callers cannot retry creation.
+            self._logger.exception(
+                "Request %s was created, but assignment to user %s was not confirmed",
+                request_id,
+                user_id,
+            )
+            return RequestAssignmentError(
+                request_id=request_id,
+                message=str(error) or "The requester update could not be confirmed.",
+            )
 
     @request_with_type(overseerr_type=Request)
     async def modify_request(
@@ -387,15 +483,22 @@ class OverseerrAPI:
     def _headers(self) -> Dict[str, str]:
         """
         Headers to send with every request. Don't use this directly.
-        If user/pass
+        Prefer the user session when credentials were supplied, so requests
+        retain that user's permissions instead of using the admin API key.
         :return: Overseerr headers
         :rtype: Dict[str, str]
         """
-        return {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if self._api_key and not (self._email and self._password):
+            headers["X-Api-Key"] = self._api_key
+        return headers
 
     @property
     def _headers_with_token(self) -> Dict[str, str]:
-        return dict(**self._headers, **{"X-Api-Key": self._api_key})
+        headers = self._headers
+        if self._api_key:
+            headers["X-Api-Key"] = self._api_key
+        return headers
 
     @property
     def _cookies(self):
